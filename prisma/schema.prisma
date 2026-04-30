@@ -1,0 +1,440 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Supplier {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  location  String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+}
+
+// Key-value store for app settings (usdToVnd, etc.)
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Product {
+  id         String  @id @default(cuid())
+  name       String
+  nameVi     String?
+  skuShopify String?
+  skuTiktok  String?
+  skuAmz     String? // Amazon ASIN / Barcode — dùng để match với kho TD
+  unit       String  @default("kg")
+
+  // ── Đóng gói theo TRỌNG LƯỢNG (weight-based) ───────────────────────────────
+  // gramsPerUnit: số gram trong 1 gói bán (VD: 200 = mỗi gói 200g)
+  // Dùng khi unit = "kg" hoặc "g": plannedQty = quantity_kg × 1000 ÷ gramsPerUnit
+  gramsPerUnit     Float?
+
+  // ── Đóng gói theo SỐ LƯỢNG (count-based) ────────────────────────────────────
+  // piecesPerUnit: số hạt/cái/miếng trong 1 đơn vị MUA (VD: 1 lạng = 1000 hạt)
+  // piecesPerPack: số hạt/cái trong 1 gói BÁN (VD: 1 gói = 150 hạt)
+  // Dùng khi sản phẩm đếm theo số lượng: plannedQty = quantity × piecesPerUnit ÷ piecesPerPack
+  piecesPerUnit    Float?
+  piecesPerPack    Float?
+
+  // Alert when stock drops below this number of units
+  restockThreshold Float?  @default(10)
+  // Kho Nhung (VN) — số gói đang tồn tại kho Nhung chờ ship sang Mỹ
+  // Shopify inventory = nhungQty + kho Bros
+  nhungQty   Float   @default(0)
+  category   String?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchaseItems    PurchaseItem[]
+  salesItems       SalesItem[]
+  fulfillmentItems FulfillmentItem[]
+  researchItems    PurchaseResearch[]
+  productionItems  ProductionItem[]
+}
+
+model PurchaseOrder {
+  id           String    @id @default(cuid())
+  code         String    @unique
+  supplierId   String
+  supplier     Supplier  @relation(fields: [supplierId], references: [id])
+  orderDate    DateTime
+  expectedDate DateTime?
+  arrivedDate  DateTime?
+  status       String    @default("draft")
+  shippingCode String?
+  shippingUnit String?
+  notes        String?
+  totalVnd     Float     @default(0)
+  shippingCostVnd Float?  // Phí ship mua về (từ chợ về nhà)
+  packingLaborVnd Float?  // Tiền nhân công đóng hàng (đóng vào túi 200g)
+  packingStatus   String? // null=không cần | "pending"=chờ đóng | "done"=đã đóng
+  // Đơn mua hộ: có thêm khoản thu lại từ người nhờ mua
+  isBuyOnBehalf   Boolean @default(false)
+  sellingPriceVnd Float?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  items            PurchaseItem[]
+  payments         Payment[]
+  shipmentOrders   ShipmentBatchOrder[]
+  fundTransactions FundTransaction[]
+  productionOrder  ProductionOrder?
+}
+
+model PurchaseItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  quantity        Float
+  priceVnd        Float
+  subtotalVnd     Float
+  notes           String?       // Ghi chú per dòng hàng
+
+  salesItems       SalesItem[]
+  productionItem   ProductionItem?
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  // "to_supplier" = tôi trả cho nhà cung cấp
+  // "from_customer" = đối tác trả lại cho tôi (mua hộ)
+  direction       String        @default("to_supplier")
+  amount          Float
+  currency        String        @default("VND")
+  paidAt          DateTime
+  method          String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+}
+
+// ─── LOÔ VẬN CHUYỂN VN→US ───────────────────────────────────────────────────
+
+model ShipmentBatch {
+  id          String    @id @default(cuid())
+  code        String    @unique   // VD: SHP-20260415-001
+  description String?
+
+  // Carrier & tracking
+  carrier      String?   // DHL, FedEx, USPS, J&T...
+  trackingCode String?
+
+  // Timeline
+  packedDate     DateTime?  // Đóng hàng xong
+  departedVnDate DateTime?  // Xuất phát từ VN/HCM
+  arrivedUsDate  DateTime?  // Về đến Mỹ
+  receivedByTdDate DateTime? // kho TD xác nhận đã nhận
+
+  // Status
+  status  String    @default("packing")
+  // packing → in_transit → arrived_us → received_by_td → done
+
+  // kho TD đã cập nhật sheet chưa
+  tdSheetUpdated Boolean @default(false)
+
+  totalWeightKg Float?  // Tổng cân nặng lô
+  shippingCostVnd Float? // Phí ship
+
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  orders ShipmentBatchOrder[]
+}
+
+// Nhiều đơn mua → 1 lô vận chuyển
+model ShipmentBatchOrder {
+  shipmentBatchId String
+  purchaseOrderId String
+  shipmentBatch   ShipmentBatch @relation(fields: [shipmentBatchId], references: [id], onDelete: Cascade)
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
+  @@id([shipmentBatchId, purchaseOrderId])
+}
+
+// ─── SỔ QUỸ (BẠN ↔ NHUNG) ──────────────────────────────────────────────────
+
+model FundTransaction {
+  id          String    @id @default(cuid())
+  date        DateTime
+  // "nhung_in"   = Nhung gửi tiền vào quỹ
+  // "spent"      = Chi mua hàng
+  // "nhung_out"  = Trả lại cho Nhung (nếu dư)
+  // "other_in"   = Thu khác
+  // "other_out"  = Chi khác
+  type        String
+  amountVnd   Float
+  description String?
+
+  // Liên kết đơn mua nếu là khoản chi mua hàng
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+// ─── LỆNH ĐÓNG HÀNG (FULFILLMENT) ──────────────────────────────────────────
+
+model FulfillmentOrder {
+  id             String    @id @default(cuid())
+  code           String    @unique  // VD: PACK-20260415-001
+  source         String    // "shopify" | "tiktok" | "manual"
+  shopifyOrderId String?
+  tiktokOrderId  String?
+
+  // Thông tin gửi hàng
+  customerName    String?
+  customerAddress String?
+  customerNote    String?
+
+  // Trạng thái tổng
+  status String @default("pending")
+  // pending → notified → shipped → done | cancelled
+
+  // ── Kho xử lý ────────────────────────────────────────────────────────────
+  // "nhung" = toàn bộ kho Nhung
+  // "bros"  = toàn bộ kho Bros
+  // "mixed" = một phần Nhung, một phần Bros
+  warehouseSource String?
+
+  // Kho Nhung timeline
+  nhungNotifiedAt  DateTime?   // User đã báo kho Nhung
+  nhungShippedAt   DateTime?   // Nhung xác nhận đã ship
+  nhungTrackingCode String?
+
+  // Kho Bros timeline
+  brosNotifiedAt   DateTime?   // User đã báo kho Bros
+  brosShippedAt    DateTime?   // Bros xác nhận đã ship
+  brosTrackingCode String?
+
+  // Legacy / TD fields (giữ lại tương thích)
+  sentToTdAt   DateTime?
+  packedAt     DateTime?
+  shippedAt    DateTime?
+  trackingCode String?
+
+  notes          String?
+  noteSentToTd   String?
+
+  tdSheetRowId   String?
+  tdSheetSynced  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items FulfillmentItem[]
+}
+
+model FulfillmentItem {
+  id                 String           @id @default(cuid())
+  fulfillmentOrderId String
+  fulfillmentOrder   FulfillmentOrder @relation(fields: [fulfillmentOrderId], references: [id], onDelete: Cascade)
+  productId          String?
+  product            Product?         @relation(fields: [productId], references: [id])
+  skuRaw             String?
+  productName        String
+  quantity           Float
+  // Kho được phân công xử lý item này: "nhung" | "bros"
+  warehouseSource    String?
+  notes              String?
+}
+
+// ─── KHO THỰC TẾ (từ Bros + các kho khác) ──────────────────────────────────
+
+model WarehouseStock {
+  id          String   @id @default(cuid())
+  sku         String   // AMZ barcode hoặc Shopify SKU
+  warehouse   String   // "bros", "shopify", ...
+  description String?  // Tên sản phẩm theo kho
+  inStock     Float    @default(0)  // Total In Stock
+  inStockNew  Float    @default(0)  // In Stock (New)
+  received    Float    @default(0)  // Total Received
+  shipped     Float    @default(0)  // Total Shipped
+  waiting     Float    @default(0)  // Waiting / in transit
+  damaged     Float    @default(0)  // Damaged
+  unit        String?
+  lastSyncedAt DateTime @default(now())
+
+  @@unique([sku, warehouse])
+}
+
+// ─── SHOPIFY ORDERS (cache) ──────────────────────────────────────────────────
+
+model ShopifyOrder {
+  id             String   @id @default(cuid())
+  shopifyId      String   @unique
+  orderName      String   // VD: #1234
+  email          String?
+  financialStatus String?
+  fulfillmentStatus String?
+  totalPriceUsd  Float
+  lineItemsJson  String   // JSON string of line items
+  sourceName     String?  // Nguồn đơn hàng: "web", "tiktok", "point_of_sale", v.v.
+  paymentGateway String?  // Cổng thanh toán: "shopify_payments", "tiktok", v.v.
+  createdAtShopify DateTime
+  syncedAt       DateTime @default(now())
+
+  fulfillmentOrderId String?
+}
+
+model SalesBatch {
+  id         String    @id @default(cuid())
+  source     String
+  importedAt DateTime  @default(now())
+  fileName   String?
+  dateFrom   DateTime?
+  dateTo     DateTime?
+  notes      String?
+
+  items SalesItem[]
+}
+
+model SalesItem {
+  id             String        @id @default(cuid())
+  batchId        String
+  batch          SalesBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  productId      String?
+  product        Product?      @relation(fields: [productId], references: [id])
+  purchaseItemId String?
+  purchaseItem   PurchaseItem? @relation(fields: [purchaseItemId], references: [id])
+  skuRaw         String?
+  productName    String
+  quantity       Float
+  priceUsd       Float
+  subtotalUsd    Float
+  orderId        String?
+  orderDate      DateTime?
+  createdAt      DateTime      @default(now())
+}
+
+// ─── NGHIÊN CỨU GIÁ MUA ────────────────────────────────────────────────────
+
+model PurchaseResearch {
+  id           String   @id @default(cuid())
+  productId    String?
+  product      Product? @relation(fields: [productId], references: [id])
+  productName  String   // Tên sản phẩm cần nghiên cứu
+  unit         String   @default("kg")
+
+  // Phân tích thị trường
+  minPriceVnd    Float?
+  maxPriceVnd    Float?
+  targetPriceVnd Float?   // Mức giá mục tiêu muốn mua
+  targetQty      Float?   // Số lượng dự kiến mua
+
+  // Ưu tiên & trạng thái
+  priority  Int    @default(2)   // 1=thấp 2=bình thường 3=cao 4=khẩn
+  status    String @default("researching")
+  // researching | ready_to_buy | purchased | paused
+
+  // Ghi chú
+  qualityNotes String?  // Yêu cầu chất lượng
+  sourceNotes  String?  // Nguồn / địa chỉ có thể mua
+  generalNotes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prices PurchaseResearchPrice[]
+}
+
+model PurchaseResearchPrice {
+  id         String           @id @default(cuid())
+  researchId String
+  research   PurchaseResearch @relation(fields: [researchId], references: [id], onDelete: Cascade)
+
+  supplierName String?
+  priceVnd     Float
+  unit         String  @default("kg")
+  quality      String?  // Loại 1, Loại 2, tươi, khô...
+  isVerified   Boolean @default(false)
+  date         DateTime @default(now())
+  notes        String?
+}
+
+// ─── SẢN XUẤT / ĐÓNG GÓI ────────────────────────────────────────────────────
+
+model ProductionOrder {
+  id              String        @id @default(cuid())
+  code            String        @unique  // PROD-20260415-001
+  purchaseOrderId String        @unique  // 1 đơn mua → 1 lệnh sản xuất
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
+  status          String   @default("pending")
+  // pending | in_production | done | cancelled
+
+  startedAt       DateTime?
+  completedAt     DateTime?
+  notes           String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items           ProductionItem[]
+  costs           ProductionCost[]   // Các khoản chi phí của lô
+}
+
+// Chi phí phát sinh trong 1 lô sản xuất
+// Tự động tạo từ đơn mua nguyên liệu, bao bì;
+// hoặc nhập tay (nhân công, điện, ship...)
+model ProductionCost {
+  id                String          @id @default(cuid())
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+
+  // Loại chi phí
+  type              String
+  // "material"   = Chi phí nguyên liệu (tự động từ đơn mua)
+  // "packaging"  = Bao bì, túi zip, nhãn... (từ đơn mua bao bì hoặc nhập tay)
+  // "labor"      = Nhân công đóng gói
+  // "shipping"   = Phí ship nguyên liệu về
+  // "other"      = Chi phí khác
+
+  description       String          // Tên khoản chi: "Xạ đen 5kg", "Túi zip 100 cái", "Nhân công 3h"
+  amountVnd         Float
+  note              String?
+
+  // Liên kết đơn mua nếu lấy từ đó (để trace)
+  purchaseOrderId   String?
+
+  createdAt         DateTime @default(now())
+}
+
+model ProductionItem {
+  id                String          @id @default(cuid())
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  purchaseItemId    String          @unique  // 1 purchase item → 1 production item
+  purchaseItem      PurchaseItem    @relation(fields: [purchaseItemId], references: [id])
+  productId         String
+  product           Product         @relation(fields: [productId], references: [id])
+
+  plannedQty        Float   // Số gói dự kiến (tự động tính)
+  actualQty         Float?  // Số gói thực tế sau khi đóng xong
+
+  // Snapshot cấu hình đóng gói tại thời điểm tạo lệnh
+  // (lưu lại để hiển thị đúng ngay cả khi Product thay đổi sau này)
+  gramsPerPack      Float?  // = product.gramsPerUnit tại thời điểm tạo
+  piecesPerUnit     Float?  // = product.piecesPerUnit tại thời điểm tạo
+  piecesPerPack     Float?  // = product.piecesPerPack tại thời điểm tạo (có thể override)
+
+  wasteNote         String? // Ghi chú lý do hao hụt
+
+  createdAt         DateTime @default(now())
+}

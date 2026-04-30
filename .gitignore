@@ -39,3 +39,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# databases and data exploration
+dev.db
+dev.db-journal
+bros-mapping-analysis.csv
+*.csv
+
+# agent custom instructions
+.claude/
+
+# Temporary data scripts
+scripts/
