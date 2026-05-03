@@ -85,12 +85,20 @@ export async function POST(req: NextRequest) {
         const unit =
           product.product_type?.toLowerCase().includes("seed") ? "pack" : "unit";
 
+        const imageUrl = product.images?.[0]?.src ?? null;
+        const priceUsd = firstSku && product.variants[0]?.price
+          ? parseFloat(product.variants[0].price)
+          : null;
+
         if (existing) {
           await prisma.product.update({
             where: { id: existing.id },
             data: {
               name: product.title,
               category: product.product_type || existing.category,
+              // Always update cached Shopify fields
+              ...(imageUrl ? { imageUrl } : {}),
+              ...(priceUsd != null ? { priceUsd } : {}),
               // Only update skuShopify if currently empty
               ...(existing.skuShopify == null && firstSku
                 ? { skuShopify: firstSku }
@@ -108,6 +116,8 @@ export async function POST(req: NextRequest) {
               unit,
               category: product.product_type || null,
               gramsPerUnit: null,
+              imageUrl,
+              priceUsd,
             },
           });
           createdCount++;
@@ -281,6 +291,11 @@ interface ShopifyVariant {
   id: number;
   sku: string;
   title: string;
+  price: string;
+}
+
+interface ShopifyProductImage {
+  src: string;
 }
 
 interface ShopifyProduct {
@@ -288,6 +303,7 @@ interface ShopifyProduct {
   title: string;
   product_type: string;
   variants: ShopifyVariant[];
+  images: ShopifyProductImage[];
 }
 
 interface ShopifyOrder {

@@ -79,6 +79,28 @@ export function generateProductionCode(): string {
 }
 
 /**
+ * Chuyển đổi số lượng nguyên liệu → số gói bán (selling units).
+ * Dùng chung cho dashboard, inventory, shipments, sheets sync.
+ *
+ * Ví dụ: 1kg = 1000g, gramsPerUnit=200 → 5 gói
+ *         5 lạng, piecesPerUnit=1000, piecesPerPack=150 → 33 gói
+ */
+export function toSellingUnits(
+  quantity: number,
+  unit: string,
+  gramsPerUnit: number | null,
+  piecesPerUnit?: number | null,
+  piecesPerPack?: number | null,
+): number {
+  if (piecesPerUnit && piecesPerPack && piecesPerPack > 0) {
+    return Math.floor((quantity * piecesPerUnit) / piecesPerPack);
+  }
+  if (gramsPerUnit && unit === "kg") return Math.floor((quantity * 1000) / gramsPerUnit);
+  if (gramsPerUnit && unit === "g")  return Math.floor(quantity / gramsPerUnit);
+  return Math.round(quantity);
+}
+
+/**
  * Tính số gói dự kiến từ số lượng mua.
  *
  * Có 2 cơ chế:

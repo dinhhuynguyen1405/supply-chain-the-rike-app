@@ -32,7 +32,10 @@ model Product {
   nameVi     String?
   skuShopify String?
   skuTiktok  String?
-  skuAmz     String? // Amazon ASIN / Barcode — dùng để match với kho TD
+  skuAmz     String? // Amazon ASIN / Barcode (legacy — Amazon đã dừng)
+  // skuBros: SKU tại kho Bros (nếu khác skuAmz). Nếu null → dùng skuAmz để match Bros.
+  // Dùng khi thêm mã hàng mới lên Shopify cho kho Bros mà không có Amazon SKU cũ.
+  skuBros    String?
   unit       String  @default("kg")
 
   // ── Đóng gói theo TRỌNG LƯỢNG (weight-based) ───────────────────────────────
@@ -54,6 +57,9 @@ model Product {
   nhungQty   Float   @default(0)
   category   String?
   notes      String?
+  // Shopify listing cache — populated on sync, used in Products page
+  imageUrl   String?
+  priceUsd   Float?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -81,6 +87,18 @@ model PurchaseOrder {
   shippingCostVnd Float?  // Phí ship mua về (từ chợ về nhà)
   packingLaborVnd Float?  // Tiền nhân công đóng hàng (đóng vào túi 200g)
   packingStatus   String? // null=không cần | "pending"=chờ đóng | "done"=đã đóng
+  // Loại đơn mua:
+  // "raw_material" = nguyên liệu → cần qua sản xuất tại Kho Huy trước khi ship
+  // "wholesale"    = hàng sỉ đã đóng gói sẵn → thẳng đến Kho Tuấn/Kho Nhung
+  // "packaging"    = bao bì, nhãn, túi zip... (phụ liệu sản xuất)
+  purchaseType    String  @default("raw_material")
+
+  // Kho đích sau khi mua:
+  // "kho_huy"  = về Kho Huy để sản xuất
+  // "kho_tuan" = thẳng Kho Tuấn HCM (hàng sỉ đã đóng gói)
+  // "nhung"    = thẳng Kho Nhung tại Mỹ (hiếm)
+  purchaseDestination String @default("kho_huy")
+
   // Đơn mua hộ: có thêm khoản thu lại từ người nhờ mua
   isBuyOnBehalf   Boolean @default(false)
   sellingPriceVnd Float?
@@ -148,8 +166,21 @@ model ShipmentBatch {
   // kho TD đã cập nhật sheet chưa
   tdSheetUpdated Boolean @default(false)
 
-  totalWeightKg Float?  // Tổng cân nặng lô
-  shippingCostVnd Float? // Phí ship
+  totalWeightKg   Float?  // Tổng cân nặng lô
+  shippingCostVnd Float?  // Phí ship VN→US
+
+  // ── Kho đích tại Mỹ ────────────────────────────────────────────────────────
+  // "nhung" = toàn bộ vào Kho Nhung → tự động cộng nhungQty khi done
+  // "bros"  = toàn bộ vào Kho Bros  → tự động cộng WarehouseStock khi done
+  // "mixed" = một phần mỗi kho      → không auto-update, cập nhật thủ công
+  destinationWarehouse String @default("nhung")
+
+  // Tự động cập nhật inventory khi lô đến nơi (done)?
+  // Set false nếu muốn kiểm tra trước khi confirm
+  autoUpdateInventory Boolean @default(true)
+
+  // Đã tự động cộng inventory chưa (tránh duplicate)
+  inventoryUpdated Boolean @default(false)
 
   notes     String?
   createdAt DateTime  @default(now())
@@ -437,4 +468,43 @@ model ProductionItem {
   wasteNote         String? // Ghi chú lý do hao hụt
 
   createdAt         DateTime @default(now())
+}
+
+// ─── PHÍ KHO BROS (US) ───────────────────────────────────────────────────────
+//
+// Ghi nhận tất cả khoản phí phát sinh tại kho Bros:
+//   1. Inbound receiving fee (phí nhận hàng khi lô ship đến)
+//   2. Storage fee (phí lưu kho theo tháng/lô)
+//   3. Fulfillment fee (phí pick & ship per đơn hàng)
+//   4. Other (phí xử lý, label, return...)
+//
+// Dùng để: tính COGS thực tế, theo dõi chi phí vận hành tại Mỹ.
+
+model BrosFee {
+  id          String   @id @default(cuid())
+
+  // Loại phí
+  type        String
+  // "inbound"     = Phí nhận hàng (receiving) khi lô hàng đến kho Bros
+  // "storage"     = Phí lưu kho (theo kỳ)
+  // "fulfillment" = Phí pick & pack & ship per đơn hàng
+  // "return"      = Phí xử lý hàng trả về
+  // "other"       = Phí khác
+
+  description String   // Mô tả: "Lô SHP-20260415-001 inbound fee", "Q2/2026 storage"
+
+  amountUsd   Float    // Phí tính bằng USD (kho Bros ở Mỹ)
+  amountVnd   Float?   // Quy đổi VND (optional, tính theo tỷ giá lúc nhập)
+
+  // Liên kết lô hàng hoặc đơn fulfillment (nếu có)
+  shipmentBatchId      String?
+  fulfillmentOrderId   String?
+
+  // SKU bị tính phí (nếu phí per-SKU, có thể null nếu phí chung)
+  sku         String?
+  quantity    Float?   // Số lượng đơn vị (cho fulfillment fee: số đơn)
+
+  paidAt      DateTime?
+  note        String?
+  createdAt   DateTime @default(now())
 }

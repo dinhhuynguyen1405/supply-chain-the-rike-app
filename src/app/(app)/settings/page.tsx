@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   CheckCircle2, XCircle, RefreshCw, ExternalLink,
-  ShoppingCart, Package, Factory, Ship, BarChart3, Zap
+  ShoppingCart, Package, Factory, Ship, BarChart3, Zap,
 } from "lucide-react";
 
 const SHEET_ID = process.env.NEXT_PUBLIC_GOOGLE_SPREADSHEET_ID ?? "";
@@ -37,15 +37,27 @@ const AUTO_SYNC_FLOWS = [
   },
   {
     icon: <Ship className="h-4 w-4 text-cyan-500" />,
-    label: "Vận chuyển",
+    label: "Lô vận chuyển VN→US",
     tab: "Tab: Inbound Information",
-    triggers: ["Tạo lô shipment", "Cập nhật trạng thái lô"],
+    triggers: ["Tạo lô shipment", "Cập nhật trạng thái", "Lô hoàn tất → tự động cộng kho"],
   },
   {
     icon: <BarChart3 className="h-4 w-4 text-green-500" />,
     label: "Bán hàng (FBM)",
     tab: "Tab: FBM Order",
     triggers: ["Tạo đơn FBM", "Cập nhật trạng thái đơn"],
+  },
+  {
+    icon: <Zap className="h-4 w-4 text-orange-500" />,
+    label: "Kho Nhung",
+    tab: "Tab: Kho Nhung",
+    triggers: ["Cập nhật nhungQty", "Nhung xác nhận ship", "Lô hàng đến kho Nhung"],
+  },
+  {
+    icon: <Zap className="h-4 w-4 text-purple-500" />,
+    label: "Đơn Kho Nhung",
+    tab: "Tab: Đơn Kho Nhung",
+    triggers: ["Tạo lệnh đóng hàng", "Thông báo kho", "Kho xác nhận ship"],
   },
 ];
 

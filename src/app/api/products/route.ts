@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
       skuShopify: body.skuShopify || null,
       skuTiktok: body.skuTiktok || null,
       skuAmz: body.skuAmz || null,
+      skuBros: body.skuBros || null,
       unit: body.unit || "kg",
       gramsPerUnit:  body.gramsPerUnit  ? Number(body.gramsPerUnit)  : null,
       piecesPerUnit: body.piecesPerUnit ? Number(body.piecesPerUnit) : null,

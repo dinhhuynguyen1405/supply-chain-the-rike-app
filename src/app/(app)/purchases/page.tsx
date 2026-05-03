@@ -24,6 +24,8 @@ interface PurchaseOrder {
   id: string;
   code: string;
   status: string;
+  purchaseType: string;
+  purchaseDestination: string;
   orderDate: string;
   expectedDate: string | null;
   arrivedDate: string | null;
@@ -38,6 +40,22 @@ interface PurchaseOrder {
   items: { product: { name: string; nameVi: string | null }; quantity: number; priceVnd: number }[];
   payments: { amount: number; direction: string }[];
 }
+
+const PURCHASE_TYPE_LABELS: Record<string, string> = {
+  raw_material: "Nguyên liệu",
+  wholesale: "Hàng sỉ",
+  packaging: "Bao bì",
+};
+const PURCHASE_TYPE_COLORS: Record<string, string> = {
+  raw_material: "bg-orange-100 text-orange-700",
+  wholesale: "bg-blue-100 text-blue-700",
+  packaging: "bg-purple-100 text-purple-700",
+};
+const DESTINATION_LABELS: Record<string, string> = {
+  kho_huy: "Kho Huy (sx)",
+  kho_nhung: "Kho Nhung",
+  kho_bros: "Kho Bros (US)",
+};
 
 const PACKING_LABELS: Record<string, string> = {
   pending: "Chờ đóng hàng",
@@ -69,6 +87,8 @@ export default function PurchasesPage() {
     notes: "",
     isBuyOnBehalf: false,
     sellingPriceVnd: "",
+    purchaseType: "raw_material",
+    purchaseDestination: "kho_huy",
   });
   const [items, setItems] = useState<OrderItem[]>([
     { productId: "", quantity: 1, priceVnd: 0, subtotalVnd: 0, notes: "" },
@@ -114,7 +134,7 @@ export default function PurchasesPage() {
       setOpen(false);
       load();
       setItems([{ productId: "", quantity: 1, priceVnd: 0, subtotalVnd: 0, notes: "" }]);
-      setForm({ supplierId: "", orderDate: new Date().toISOString().split("T")[0], expectedDate: "", shippingCode: "", shippingUnit: "", shippingCostVnd: "", notes: "", isBuyOnBehalf: false, sellingPriceVnd: "" });
+      setForm({ supplierId: "", orderDate: new Date().toISOString().split("T")[0], expectedDate: "", shippingCode: "", shippingUnit: "", shippingCostVnd: "", notes: "", isBuyOnBehalf: false, sellingPriceVnd: "", purchaseType: "raw_material", purchaseDestination: "kho_huy" });
     } else {
       toast.error("Có lỗi xảy ra");
     }
@@ -222,6 +242,16 @@ export default function PurchasesPage() {
                         {o.isBuyOnBehalf && (
                           <Badge className="w-fit bg-purple-100 text-purple-700 text-xs">Mua hộ</Badge>
                         )}
+                        {!o.isBuyOnBehalf && o.purchaseType && o.purchaseType !== "raw_material" && (
+                          <Badge className={`w-fit text-xs ${PURCHASE_TYPE_COLORS[o.purchaseType] ?? "bg-gray-100 text-gray-600"}`}>
+                            {PURCHASE_TYPE_LABELS[o.purchaseType] ?? o.purchaseType}
+                          </Badge>
+                        )}
+                        {o.purchaseDestination && o.purchaseDestination !== "kho_huy" && (
+                          <Badge className="w-fit text-[10px] bg-teal-50 text-teal-700">
+                            → {DESTINATION_LABELS[o.purchaseDestination] ?? o.purchaseDestination}
+                          </Badge>
+                        )}
                         {o.packingStatus && !o.isBuyOnBehalf && (
                           <Badge className={`w-fit text-xs ${PACKING_COLORS[o.packingStatus]}`}>
                             {o.packingStatus === "done"
@@ -326,6 +356,46 @@ export default function PurchasesPage() {
                 <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.isBuyOnBehalf ? "translate-x-4" : "translate-x-0.5"}`} />
               </button>
             </div>
+
+            {/* Loại hàng + điểm đến */}
+            {!form.isBuyOnBehalf && (
+              <div className="grid grid-cols-2 gap-4 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Loại hàng mua</Label>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={form.purchaseType}
+                    onChange={(e) => {
+                      const t = e.target.value;
+                      // auto-set destination based on type
+                      const dest = t === "wholesale" ? "kho_nhung" : t === "packaging" ? "kho_huy" : "kho_huy";
+                      setForm({ ...form, purchaseType: t, purchaseDestination: dest });
+                    }}
+                  >
+                    <option value="raw_material">🥬 Nguyên liệu thô (cần sản xuất)</option>
+                    <option value="wholesale">📦 Hàng sỉ (đã đóng gói, sẵn ship)</option>
+                    <option value="packaging">🏷️ Bao bì / vật tư đóng gói</option>
+                  </select>
+                  <p className="text-[11px] text-gray-400">
+                    {form.purchaseType === "raw_material" && "→ Sẽ tạo lệnh sản xuất sau khi hàng về"}
+                    {form.purchaseType === "wholesale" && "→ Không cần sản xuất, đóng hàng và ship luôn"}
+                    {form.purchaseType === "packaging" && "→ Bao bì sẽ được dùng trong sản xuất"}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Giao đến kho</Label>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={form.purchaseDestination}
+                    onChange={(e) => setForm({ ...form, purchaseDestination: e.target.value })}
+                  >
+                    <option value="kho_huy">🏠 Kho Huy (sản xuất)</option>
+                    <option value="kho_nhung">🏪 Kho Nhung (thành phẩm)</option>
+                    <option value="kho_bros">🇺🇸 Kho Bros (US)</option>
+                  </select>
+                </div>
+              </div>
+            )}
 
             {/* Basic info */}
             <div className="grid grid-cols-2 gap-4">

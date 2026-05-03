@@ -1,55 +1,63 @@
 import { prisma } from "@/lib/prisma";
+import { toSellingUnits } from "@/lib/utils";
 
 export interface InventoryProduct {
   id: string;
   name: string;
   nameVi: string | null;
   skuShopify: string | null;
-  skuAmz: string | null;     // AMZ barcode — dùng để match với kho Bros
+  skuAmz: string | null;
   unit: string;
   gramsPerUnit: number | null;
   restockThreshold: number | null;
   category: string | null;
-  // calculated
-  purchasedUnits: number;   // packs / gói available (after conversion)
-  soldUnits: number;        // packs sold
-  stockUnits: number;       // purchasedUnits - soldUnits
+  imageUrl: string | null;
+  priceUsd: number | null;
+  // Kho thực tế (nguồn chính xác)
+  nhungQty: number;
+  brosQty: number;
+  stockUnits: number;   // nhungQty + brosQty
   lowStock: boolean;
-}
-
-/** Convert a purchase quantity (in raw purchase unit) to selling units (packs) */
-function toSellingUnits(quantity: number, unit: string, gramsPerUnit: number | null): number {
-  if (gramsPerUnit && unit === "kg") {
-    return Math.floor((quantity * 1000) / gramsPerUnit);
-  }
-  return quantity;
+  // Legacy computed (dùng cho context lịch sử)
+  purchasedUnits: number;
+  soldUnits: number;
 }
 
 export async function GET() {
-  const products = await prisma.product.findMany({
-    orderBy: { nameVi: "asc" },
-    include: {
-      purchaseItems: {
-        include: {
-          purchaseOrder: { select: { status: true } },
+  const [products, brosStocks] = await Promise.all([
+    prisma.product.findMany({
+      orderBy: { nameVi: "asc" },
+      include: {
+        purchaseItems: {
+          include: { purchaseOrder: { select: { status: true } } },
         },
+        salesItems: { select: { quantity: true } },
       },
-      salesItems: {
-        select: { quantity: true },
-      },
-    },
-  });
+    }),
+    prisma.warehouseStock.findMany({ where: { warehouse: "bros" } }),
+  ]);
+
+  // Bros map: sku → inStock
+  const brosMap: Record<string, number> = {};
+  for (const s of brosStocks) brosMap[s.sku] = (brosMap[s.sku] ?? 0) + s.inStock;
 
   const inventory: InventoryProduct[] = products.map((p) => {
-    // Only count stock from orders that have actually arrived / been received
+    // Tồn kho thực = nhungQty + brosQty (nguồn chính xác)
+    // Bros lookup: skuBros (mới) → skuAmz (legacy) → skuShopify (fallback)
+    const brosQty =
+      (p.skuBros ? brosMap[p.skuBros] : null) ??
+      (p.skuAmz ? brosMap[p.skuAmz] : null) ??
+      (p.skuShopify ? brosMap[p.skuShopify] : null) ??
+      0;
+    const stockUnits = p.nhungQty + brosQty;
+    const threshold = p.restockThreshold ?? 10;
+
+    // Legacy: tính từ purchase - sales (dùng cho context lịch sử)
     const arrivedStatuses = ["arrived", "completed"];
     const purchasedUnits = p.purchaseItems
       .filter((pi) => arrivedStatuses.includes(pi.purchaseOrder.status))
       .reduce((sum, pi) => sum + toSellingUnits(pi.quantity, p.unit, p.gramsPerUnit), 0);
-
     const soldUnits = p.salesItems.reduce((sum, si) => sum + si.quantity, 0);
-    const stockUnits = purchasedUnits - soldUnits;
-    const threshold = p.restockThreshold ?? 10;
 
     return {
       id: p.id,
@@ -61,10 +69,14 @@ export async function GET() {
       gramsPerUnit: p.gramsPerUnit,
       restockThreshold: p.restockThreshold,
       category: p.category,
+      imageUrl: p.imageUrl,
+      priceUsd: p.priceUsd,
+      nhungQty: p.nhungQty,
+      brosQty,
+      stockUnits,
+      lowStock: stockUnits > 0 && stockUnits <= threshold,
       purchasedUnits,
       soldUnits,
-      stockUnits,
-      lowStock: stockUnits <= threshold,
     };
   });
 

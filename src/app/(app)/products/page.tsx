@@ -11,7 +11,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, RefreshCw, Trash2, Search, ChevronLeft, ChevronRight, Check, X } from "lucide-react";
+import {
+  Plus, Pencil, RefreshCw, Trash2, Search,
+  ChevronLeft, ChevronRight, Check, X, Package,
+  Home, Warehouse, ExternalLink,
+} from "lucide-react";
 import Link from "next/link";
 
 interface Product {
@@ -20,6 +24,8 @@ interface Product {
   nameVi: string | null;
   skuShopify: string | null;
   skuTiktok: string | null;
+  skuAmz: string | null;
+  skuBros: string | null;
   unit: string;
   gramsPerUnit: number | null;
   piecesPerUnit: number | null;
@@ -27,6 +33,9 @@ interface Product {
   restockThreshold: number | null;
   category: string | null;
   notes: string | null;
+  nhungQty: number;
+  imageUrl: string | null;
+  priceUsd: number | null;
   pendingShipQty: number;
   inTransitQty: number;
 }
@@ -45,6 +54,8 @@ const empty = {
   nameVi: "",
   skuShopify: "",
   skuTiktok: "",
+  skuAmz: "",
+  skuBros: "",
   unit: "kg",
   gramsPerUnit: "",
   piecesPerUnit: "",
@@ -69,6 +80,7 @@ export default function ProductsPage() {
   const [form, setForm] = useState(empty);
   const [syncing, setSyncing] = useState(false);
   const [cleaning, setCleaning] = useState(false);
+  const [shopifyImages, setShopifyImages] = useState<Record<string, string>>({});
   // Inline nameVi editing
   const [inlineEditId, setInlineEditId] = useState<string | null>(null);
   const [inlineVal, setInlineVal] = useState("");
@@ -89,9 +101,15 @@ export default function ProductsPage() {
   }, [page, search, categoryFilter, hasSkuFilter, hasViFilter]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Reset to page 1 when filters change
   useEffect(() => { setPage(1); }, [search, categoryFilter, hasSkuFilter, hasViFilter]);
+
+  // Fetch ảnh Shopify trong background
+  useEffect(() => {
+    fetch("/api/shopify/image-map")
+      .then((r) => r.json())
+      .then((m) => { if (typeof m === "object" && m !== null) setShopifyImages(m); })
+      .catch(() => {});
+  }, []);
 
   function openNew() {
     setEditing(null);
@@ -106,6 +124,8 @@ export default function ProductsPage() {
       nameVi: p.nameVi ?? "",
       skuShopify: p.skuShopify ?? "",
       skuTiktok: p.skuTiktok ?? "",
+      skuAmz: p.skuAmz ?? "",
+      skuBros: p.skuBros ?? "",
       unit: p.unit,
       gramsPerUnit: p.gramsPerUnit ? String(p.gramsPerUnit) : "",
       piecesPerUnit: p.piecesPerUnit ? String(p.piecesPerUnit) : "",
@@ -190,7 +210,6 @@ export default function ProductsPage() {
     setForm({ ...form, [k]: e.target.value });
 
   const { products, total, totalPages, categories } = resp;
-  const withSkuCount = hasSkuFilter ? total : undefined;
 
   return (
     <div className="space-y-5">
@@ -198,7 +217,7 @@ export default function ProductsPage() {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Sản phẩm</h1>
-          <p className="text-sm text-gray-500">Danh mục hàng hoá · {total} sản phẩm{withSkuCount !== undefined ? ` (đang lọc)` : ""}</p>
+          <p className="text-sm text-gray-500">Danh mục hàng hoá · {total} sản phẩm</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={syncShopify} disabled={syncing} className="text-xs">
@@ -218,7 +237,6 @@ export default function ProductsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
-        {/* Search */}
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <Input
@@ -228,8 +246,6 @@ export default function ProductsPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-
-        {/* Category filter */}
         {categories.length > 0 && (
           <select
             className="h-9 rounded-md border border-input bg-background px-3 text-sm text-gray-700"
@@ -242,8 +258,6 @@ export default function ProductsPage() {
             ))}
           </select>
         )}
-
-        {/* Toggle filters */}
         <button
           onClick={() => setHasSkuFilter(!hasSkuFilter)}
           className={`h-9 rounded-md border px-3 text-xs font-medium transition-colors ${
@@ -270,8 +284,8 @@ export default function ProductsPage() {
               <th className="px-4 py-3 text-left font-medium text-gray-500">Sản phẩm</th>
               <th className="px-4 py-3 text-left font-medium text-gray-500">SKU</th>
               <th className="px-4 py-3 text-left font-medium text-gray-500">Danh mục</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Đơn vị</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Tồn VN</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-500">Tồn kho US</th>
+              <th className="px-4 py-3 text-left font-medium text-gray-500">VN (chờ ship)</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
@@ -284,70 +298,106 @@ export default function ProductsPage() {
               </tr>
             ) : products.map((p) => (
               <tr key={p.id} className="hover:bg-gray-50 group">
+                {/* Image + Name */}
                 <td className="px-4 py-3">
-                  <Link href={`/products/${p.id}`} className="font-medium text-gray-900 hover:text-green-600 hover:underline">
-                    {p.nameVi || p.name}
-                  </Link>
-                  {p.nameVi && <p className="text-xs text-gray-400 truncate max-w-xs">{p.name}</p>}
-                  {!p.nameVi && (
-                    inlineEditId === p.id ? (
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <Input
-                          ref={inlineRef}
-                          value={inlineVal}
-                          onChange={(e) => setInlineVal(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") saveInlineVi(p.id);
-                            if (e.key === "Escape") setInlineEditId(null);
-                          }}
-                          placeholder="Nhập tên tiếng Việt..."
-                          className="h-7 text-xs py-0 w-48"
-                        />
-                        <button
-                          onClick={() => saveInlineVi(p.id)}
-                          className="p-1 rounded text-green-600 hover:bg-green-50"
-                        >
-                          <Check className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setInlineEditId(null)}
-                          className="p-1 rounded text-gray-400 hover:bg-gray-100"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => startInlineEdit(p)}
-                        className="mt-0.5 block"
-                        title="Nhấn để thêm tên tiếng Việt"
-                      >
-                        <Badge className="bg-amber-50 text-amber-600 text-[10px] border border-amber-200 cursor-pointer hover:bg-amber-100 transition-colors">
-                          + Thêm tên VN
-                        </Badge>
-                      </button>
-                    )
+                  <div className="flex items-start gap-3">
+                    {/* Thumbnail — DB cache hoặc live từ Shopify */}
+                    {(() => {
+                      const img = p.imageUrl ?? (p.skuShopify ? shopifyImages[p.skuShopify] : null);
+                      return img ? (
+                        <img src={img} alt={p.name}
+                          className="h-10 w-10 rounded-lg object-cover shrink-0 border border-gray-100" />
+                      ) : (
+                        <div className="h-10 w-10 rounded-lg bg-gray-100 shrink-0 flex items-center justify-center">
+                          <Package className="h-4 w-4 text-gray-300" />
+                        </div>
+                      );
+                    })()}
+                    <div className="min-w-0">
+                      <Link href={`/products/${p.id}`} className="font-medium text-gray-900 hover:text-green-600 hover:underline leading-snug block">
+                        {p.nameVi || p.name}
+                      </Link>
+                      {p.nameVi && <p className="text-xs text-gray-400 truncate max-w-xs">{p.name}</p>}
+                      {!p.nameVi && (
+                        inlineEditId === p.id ? (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <Input
+                              ref={inlineRef}
+                              value={inlineVal}
+                              onChange={(e) => setInlineVal(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveInlineVi(p.id);
+                                if (e.key === "Escape") setInlineEditId(null);
+                              }}
+                              placeholder="Nhập tên tiếng Việt..."
+                              className="h-7 text-xs py-0 w-48"
+                            />
+                            <button onClick={() => saveInlineVi(p.id)} className="p-1 rounded text-green-600 hover:bg-green-50">
+                              <Check className="h-3.5 w-3.5" />
+                            </button>
+                            <button onClick={() => setInlineEditId(null)} className="p-1 rounded text-gray-400 hover:bg-gray-100">
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => startInlineEdit(p)} className="mt-0.5 block" title="Nhấn để thêm tên tiếng Việt">
+                            <Badge className="bg-amber-50 text-amber-600 text-[10px] border border-amber-200 cursor-pointer hover:bg-amber-100 transition-colors">
+                              + Thêm tên VN
+                            </Badge>
+                          </button>
+                        )
+                      )}
+                      {/* Price */}
+                      {p.priceUsd != null && (
+                        <span className="text-xs text-green-700 font-semibold mt-0.5 block">${p.priceUsd.toFixed(2)}</span>
+                      )}
+                    </div>
+                  </div>
+                </td>
+
+                {/* SKUs */}
+                <td className="px-4 py-3">
+                  <div className="flex flex-col gap-1">
+                    {p.skuShopify ? (
+                      <Badge variant="outline" className="font-mono text-xs w-fit">{p.skuShopify}</Badge>
+                    ) : <span className="text-gray-300 text-xs">—</span>}
+                    {p.skuBros && (
+                      <Badge className="font-mono text-[10px] w-fit bg-blue-50 text-blue-700 border border-blue-200">
+                        Bros: {p.skuBros}
+                      </Badge>
+                    )}
+                  </div>
+                </td>
+
+                {/* Category */}
+                <td className="px-4 py-3 text-gray-500 text-xs">{p.category ?? "—"}</td>
+
+                {/* US stock: nhungQty (Kho Nhung, đã sang Mỹ) */}
+                <td className="px-4 py-3">
+                  {p.nhungQty > 0 ? (
+                    <div className="flex items-center gap-1 text-sm font-semibold text-gray-900">
+                      <Home className="h-3.5 w-3.5 text-orange-400 shrink-0" />
+                      {p.nhungQty}
+                      <span className="text-xs font-normal text-gray-400">gói</span>
+                    </div>
+                  ) : (
+                    <span className="text-gray-300 text-xs">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3">
-                  {p.skuShopify ? (
-                    <Badge variant="outline" className="font-mono text-xs">{p.skuShopify}</Badge>
-                  ) : <span className="text-gray-300">—</span>}
-                </td>
-                <td className="px-4 py-3 text-gray-500 text-xs">{p.category ?? "—"}</td>
-                <td className="px-4 py-3 text-gray-500">{p.unit}</td>
+
+                {/* VN stock: pending / in-transit */}
                 <td className="px-4 py-3">
                   <div className="flex flex-col gap-1">
                     {p.pendingShipQty > 0 && (
                       <span className="inline-flex items-center gap-1 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
-                        {p.pendingShipQty} gói chờ ship
+                        <Warehouse className="h-3 w-3 shrink-0" />
+                        {p.pendingShipQty} chờ ship
                       </span>
                     )}
                     {p.inTransitQty > 0 && (
                       <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
-                        {p.inTransitQty} gói đang ship
+                        {p.inTransitQty} đang ship
                       </span>
                     )}
                     {p.pendingShipQty === 0 && p.inTransitQty === 0 && (
@@ -355,10 +405,24 @@ export default function ProductsPage() {
                     )}
                   </div>
                 </td>
+
+                {/* Actions */}
                 <td className="px-4 py-3 text-right">
-                  <Button size="icon" variant="ghost" onClick={() => openEdit(p)}>
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
+                  <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {p.skuShopify && (
+                      <a
+                        href={`https://admin.shopify.com/store/products?query=${p.skuShopify}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-500 transition-colors"
+                        title="Mở Shopify Admin"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                    <Button size="icon" variant="ghost" onClick={() => openEdit(p)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -394,11 +458,17 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Dialog */}
+      {/* Edit / Create Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editing ? "Sửa sản phẩm" : "Thêm sản phẩm"}</DialogTitle>
+            <DialogTitle className="flex items-center gap-3">
+              {(() => {
+                const img = editing?.imageUrl ?? (editing?.skuShopify ? shopifyImages[editing.skuShopify] : null);
+                return img ? <img src={img} alt={editing?.name} className="h-10 w-10 rounded-lg object-cover border border-gray-100" /> : null;
+              })()}
+              {editing ? "Sửa sản phẩm" : "Thêm sản phẩm"}
+            </DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4 pt-2">
             <div className="col-span-2 space-y-1.5">
@@ -409,14 +479,33 @@ export default function ProductsPage() {
               <Label>Tên tiếng Việt</Label>
               <Input placeholder="VD: Hạt sen" value={form.nameVi} onChange={f("nameVi")} />
             </div>
-            <div className="space-y-1.5">
-              <Label>SKU Shopify</Label>
-              <Input placeholder="VD: LOTUS-500G" value={form.skuShopify} onChange={f("skuShopify")} />
+
+            {/* SKUs */}
+            <div className="col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3 space-y-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">SKU & Mã hàng</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">SKU Shopify</Label>
+                  <Input placeholder="VD: LOTUS-500G" value={form.skuShopify} onChange={f("skuShopify")} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">SKU TikTok</Label>
+                  <Input placeholder="VD: TT-LOTUS-500" value={form.skuTiktok} onChange={f("skuTiktok")} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">SKU Amazon</Label>
+                  <Input placeholder="VD: AMZ-LOTUS" value={form.skuAmz} onChange={f("skuAmz")} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs flex items-center gap-1.5">
+                    SKU Bros
+                    <span className="font-normal text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">Kho US</span>
+                  </Label>
+                  <Input placeholder="Để trống = dùng SKU Amazon" value={form.skuBros} onChange={f("skuBros")} />
+                </div>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>SKU TikTok</Label>
-              <Input placeholder="VD: TT-LOTUS-500" value={form.skuTiktok} onChange={f("skuTiktok")} />
-            </div>
+
             <div className="space-y-1.5">
               <Label>Đơn vị mua</Label>
               <Input placeholder="kg / gói / hộp" value={form.unit} onChange={f("unit")} />
@@ -425,6 +514,7 @@ export default function ProductsPage() {
               <Label>Danh mục</Label>
               <Input placeholder="Hạt / Trà / Thảo mộc" value={form.category} onChange={f("category")} />
             </div>
+
             {/* Weight-based packing */}
             <div className="col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3 space-y-3">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Đóng gói theo trọng lượng</p>

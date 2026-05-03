@@ -60,10 +60,25 @@ interface ShipmentBatch {
   tdSheetUpdated: boolean;
   totalWeightKg: number | null;
   shippingCostVnd: number | null;
+  destinationWarehouse: string;
+  autoUpdateInventory: boolean;
+  inventoryUpdated: boolean;
   notes: string | null;
   createdAt: string;
   orders: ShipmentBatchOrder[];
 }
+
+const DEST_LABELS: Record<string, string> = {
+  nhung: "→ Kho Nhung",
+  bros: "→ Kho Bros",
+  mixed: "→ Hỗn hợp",
+};
+
+const DEST_COLORS: Record<string, string> = {
+  nhung: "bg-orange-100 text-orange-700",
+  bros: "bg-purple-100 text-purple-700",
+  mixed: "bg-blue-100 text-blue-700",
+};
 
 const STATUS_LABELS: Record<string, string> = {
   packing: "Đang đóng hàng",
@@ -113,6 +128,8 @@ function emptyEditForm(batch: ShipmentBatch) {
     shippingCostVnd: batch.shippingCostVnd?.toString() ?? "",
     notes: batch.notes ?? "",
     tdSheetUpdated: batch.tdSheetUpdated,
+    destinationWarehouse: batch.destinationWarehouse ?? "nhung",
+    autoUpdateInventory: batch.autoUpdateInventory ?? true,
   };
 }
 
@@ -203,6 +220,8 @@ export default function ShipmentsPage() {
           shippingCostVnd: editForm.shippingCostVnd ? Number(editForm.shippingCostVnd) : null,
           notes: editForm.notes || null,
           tdSheetUpdated: editForm.tdSheetUpdated,
+          destinationWarehouse: editForm.destinationWarehouse,
+          autoUpdateInventory: editForm.autoUpdateInventory,
         }),
       });
       if (!res.ok) { toast.error("Có lỗi xảy ra"); return; }
@@ -398,15 +417,40 @@ export default function ShipmentsPage() {
                 <Label>Ghi chú</Label>
                 <Input value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
               </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={editForm.tdSheetUpdated}
-                  onChange={(e) => setEditForm({ ...editForm, tdSheetUpdated: e.target.checked })}
-                  className="h-4 w-4 rounded border-gray-300"
-                />
-                <span className="text-sm text-gray-700">Kho TD đã cập nhật sheet</span>
-              </label>
+              {/* Kho đích */}
+              <div className="space-y-1.5">
+                <Label>Kho đích tại Mỹ</Label>
+                <select
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  value={editForm.destinationWarehouse}
+                  onChange={(e) => setEditForm({ ...editForm, destinationWarehouse: e.target.value })}
+                >
+                  <option value="nhung">🏠 Kho Nhung — tự động cộng nhungQty khi hoàn tất</option>
+                  <option value="bros">🏭 Kho Bros — tự động cộng WarehouseStock khi hoàn tất</option>
+                  <option value="mixed">⚡ Hỗn hợp — cập nhật thủ công</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editForm.autoUpdateInventory}
+                    onChange={(e) => setEditForm({ ...editForm, autoUpdateInventory: e.target.checked })}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <span className="text-sm text-gray-700">Tự động cộng tồn kho khi lô hoàn tất</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editForm.tdSheetUpdated}
+                    onChange={(e) => setEditForm({ ...editForm, tdSheetUpdated: e.target.checked })}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <span className="text-sm text-gray-700">Kho TD đã cập nhật sheet</span>
+                </label>
+              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => { setEditOpen(false); setEditTarget(null); }}>Huỷ</Button>
                 <Button type="submit" disabled={saving} className="bg-green-600 hover:bg-green-700 text-white">
@@ -436,6 +480,12 @@ export default function ShipmentsPage() {
                     <Badge className={STATUS_COLORS[batch.status] ?? "bg-gray-100 text-gray-700"}>
                       {STATUS_LABELS[batch.status] ?? batch.status}
                     </Badge>
+                    <Badge className={DEST_COLORS[batch.destinationWarehouse] ?? "bg-gray-100 text-gray-700"}>
+                      {DEST_LABELS[batch.destinationWarehouse] ?? batch.destinationWarehouse}
+                    </Badge>
+                    {batch.inventoryUpdated && (
+                      <Badge className="bg-green-100 text-green-700">✓ Đã cộng kho</Badge>
+                    )}
                     {batch.carrier && (
                       <span className="text-xs text-gray-500">{batch.carrier}</span>
                     )}

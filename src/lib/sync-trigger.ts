@@ -9,7 +9,8 @@
  *   triggerSheetSync("fbm");
  *
  * Valid targets: "purchases" | "products" | "inventory" | "sales" |
- *                "vi_names" | "bros_inventory" | "inbound" | "fbm" | "summary" | "production" | "nhung" | "all"
+ *                "vi_names" | "bros_inventory" | "inbound" | "fbm" | "summary" |
+ *                "production" | "nhung" | "nhung_orders" | "all"
  */
 
 const BASE_URL = process.env.APP_BASE_URL ?? "http://localhost:3000";

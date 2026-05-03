@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, TrendingUp, Package,
   Users, Link2, RefreshCw, Boxes, ShoppingBag, Truck,
   ClipboardList, Wallet, Search, Settings, Factory,
-  ChevronRight,
+  ChevronRight, Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -31,9 +31,10 @@ const FINANCE_ITEMS: { href: string; icon: React.ElementType; label: string }[] 
   { href: "/fund",  icon: Wallet,     label: "Sổ quỹ" },
 ];
 
-const OTHER_ITEMS: { href: string; icon: React.ElementType; label: string }[] = [
-  { href: "/links",    icon: Link2,    label: "Liên kết" },
-  { href: "/settings", icon: Settings, label: "Cài đặt API" },
+const TOOLS_ITEMS: { href: string; icon: React.ElementType; label: string }[] = [
+  { href: "/agent",   icon: Bot,   label: "Agent / Đồng bộ" },
+  { href: "/links",   icon: Link2, label: "Liên kết" },
+  { href: "/settings",icon: Settings, label: "Cài đặt API" },
 ];
 
 function NavItem({
@@ -164,10 +165,10 @@ export function Sidebar() {
           ))}
         </div>
 
-        {/* Khác */}
-        <SectionLabel>Khác</SectionLabel>
+        {/* Tools & Cài đặt */}
+        <SectionLabel>Tools &amp; Cài đặt</SectionLabel>
         <div className="space-y-0.5">
-          {OTHER_ITEMS.map(({ href, icon, label }) => (
+          {TOOLS_ITEMS.map(({ href, icon, label }) => (
             <NavItem key={href} href={href} icon={icon} label={label} active={isActive(href)} />
           ))}
         </div>

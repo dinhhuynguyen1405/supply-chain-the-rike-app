@@ -27,6 +27,7 @@ export async function PUT(
   if ("skuShopify" in body) data.skuShopify = body.skuShopify || null;
   if ("skuTiktok" in body) data.skuTiktok = body.skuTiktok || null;
   if ("skuAmz" in body) data.skuAmz = body.skuAmz || null;
+  if ("skuBros" in body) data.skuBros = body.skuBros || null;
   if ("unit" in body) data.unit = body.unit || "kg";
   if ("gramsPerUnit" in body)  data.gramsPerUnit  = body.gramsPerUnit  ? Number(body.gramsPerUnit)  : null;
   if ("piecesPerUnit" in body) data.piecesPerUnit = body.piecesPerUnit ? Number(body.piecesPerUnit) : null;

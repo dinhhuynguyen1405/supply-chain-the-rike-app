@@ -1,9 +1,5 @@
 import { prisma } from "@/lib/prisma";
-
-function toSellingUnits(quantity: number, unit: string, gramsPerUnit: number | null): number {
-  if (gramsPerUnit && unit === "kg") return Math.floor((quantity * 1000) / gramsPerUnit);
-  return quantity;
-}
+import { toSellingUnits } from "@/lib/utils";
 
 export async function GET() {
   const [
@@ -13,17 +9,23 @@ export async function GET() {
     salesAgg,
     recentOrders,
     ordersByStatus,
-    _placeholder,
     allOrders,
-    allProducts,
     settingRows,
+    // Pipeline counts
     pendingProductionCount,
     inProductionCount,
     activeShipmentsCount,
     inTransitCount,
-    pendingFulfillmentCount,
+    // Fulfillment: dùng status mới (pending/notified = đang xử lý)
+    fulfillmentPendingCount,
+    fulfillmentNotifiedCount,
     recentShipments,
     recentProduction,
+    // Tồn kho: dùng nhungQty + brosQty
+    allProducts,
+    brosStocks,
+    // Kho Nhung chưa khởi tạo
+    nhungUninitCount,
   ] = await Promise.all([
     prisma.purchaseOrder.count(),
     prisma.purchaseOrder.count({
@@ -37,28 +39,30 @@ export async function GET() {
       include: { supplier: true, items: { include: { product: true } } },
     }),
     prisma.purchaseOrder.groupBy({ by: ["status"], _count: { id: true } }),
-    Promise.resolve([]),
     prisma.purchaseOrder.findMany({
       where: { isBuyOnBehalf: true },
       include: { payments: true },
-    }),
-    prisma.product.findMany({
-      include: {
-        purchaseItems: { include: { purchaseOrder: { select: { status: true } } } },
-        salesItems: { select: { quantity: true } },
-      },
     }),
     prisma.setting.findMany(),
     // Pipeline
     prisma.productionOrder.count({ where: { status: "pending" } }),
     prisma.productionOrder.count({ where: { status: "in_production" } }),
-    prisma.shipmentBatch.count({ where: { status: { in: ["packing", "in_transit", "arrived_us", "received_by_td"] } } }),
+    prisma.shipmentBatch.count({
+      where: { status: { in: ["packing", "in_transit", "arrived_us", "received_by_td"] } },
+    }),
     prisma.shipmentBatch.count({ where: { status: "in_transit" } }),
-    prisma.fulfillmentOrder.count({ where: { status: { in: ["pending", "sent_to_td", "packing"] } } }),
+    // ✅ Status mới: pending = chờ xử lý
+    prisma.fulfillmentOrder.count({ where: { status: "pending" } }),
+    // ✅ Status mới: notified = đã báo kho, đang chờ ship
+    prisma.fulfillmentOrder.count({ where: { status: "notified" } }),
     prisma.shipmentBatch.findMany({
       take: 3,
       orderBy: { createdAt: "desc" },
       where: { status: { notIn: ["done"] } },
+      select: {
+        id: true, code: true, status: true,
+        carrier: true, trackingCode: true, destinationWarehouse: true,
+      },
     }),
     prisma.productionOrder.findMany({
       take: 3,
@@ -66,18 +70,32 @@ export async function GET() {
       where: { status: { notIn: ["cancelled"] } },
       include: { purchaseOrder: { include: { supplier: true } } },
     }),
+    // ✅ Tồn kho: dùng nhungQty + brosQty (nguồn chính xác)
+    prisma.product.findMany({
+      select: {
+        id: true, name: true, nameVi: true,
+        nhungQty: true, skuAmz: true, skuShopify: true,
+        restockThreshold: true,
+      },
+    }),
+    prisma.warehouseStock.findMany({ where: { warehouse: "bros" } }),
+    // Cảnh báo: sản phẩm có Shopify SKU nhưng nhungQty chưa được khởi tạo
+    prisma.product.count({ where: { nhungQty: 0, skuShopify: { not: null } } }),
   ]);
 
+  // ── Settings ─────────────────────────────────────────────────────────────
   const settings: Record<string, string> = { usdToVnd: "25500" };
   for (const r of settingRows) settings[r.key] = r.value;
   const usdToVnd = Number(settings.usdToVnd);
 
+  // ── Tài chính ─────────────────────────────────────────────────────────────
   const totalCostVnd = purchaseAgg._sum.totalVnd ?? 0;
   const totalRevenueUsd = salesAgg._sum.subtotalUsd ?? 0;
   const totalRevenueVnd = totalRevenueUsd * usdToVnd;
   const profitVnd = totalRevenueVnd - totalCostVnd;
   const profitMarginPct = totalRevenueVnd > 0 ? (profitVnd / totalRevenueVnd) * 100 : 0;
 
+  // ── Nợ khách hàng (mua hộ) ────────────────────────────────────────────────
   const customerDebts: { orderCode: string; owedVnd: number }[] = [];
   for (const order of allOrders) {
     if (!order.sellingPriceVnd) continue;
@@ -88,6 +106,7 @@ export async function GET() {
     if (owed > 0) customerDebts.push({ orderCode: order.code, owedVnd: owed });
   }
 
+  // ── Nợ nhà cung cấp ───────────────────────────────────────────────────────
   let supplierDebtVnd = 0;
   const allPurchaseOrders = await prisma.purchaseOrder.findMany({
     include: { payments: true },
@@ -100,23 +119,43 @@ export async function GET() {
     supplierDebtVnd += Math.max(0, o.totalVnd - paid);
   }
 
-  const arrivedStatuses = ["arrived", "completed"];
-  const lowStockProducts: { id: string; name: string; nameVi: string | null; stockUnits: number; threshold: number }[] = [];
+  // ── Low stock: dùng nhungQty + brosQty ───────────────────────────────────
+  const brosMap: Record<string, number> = {};
+  for (const s of brosStocks) brosMap[s.sku] = (brosMap[s.sku] ?? 0) + s.inStock;
+
+  const lowStockProducts: {
+    id: string; name: string; nameVi: string | null;
+    stockUnits: number; threshold: number; nhungQty: number; brosQty: number;
+  }[] = [];
+
   for (const p of allProducts) {
-    const purchased = p.purchaseItems
-      .filter((pi) => arrivedStatuses.includes(pi.purchaseOrder.status))
-      .reduce((s, pi) => s + toSellingUnits(pi.quantity, p.unit, p.gramsPerUnit), 0);
-    const sold = p.salesItems.reduce((s, si) => s + si.quantity, 0);
-    const stock = purchased - sold;
+    // Chỉ cảnh báo low stock cho sản phẩm đã có trên Shopify (skuShopify != null)
+    if (!p.skuShopify) continue;
+    const brosQty =
+      (p.skuAmz ? brosMap[p.skuAmz] : null) ??
+      (p.skuShopify ? brosMap[p.skuShopify] : null) ??
+      0;
+    const stock = p.nhungQty + brosQty;
     const threshold = p.restockThreshold ?? 10;
-    if (purchased > 0 && stock <= threshold) {
-      lowStockProducts.push({ id: p.id, name: p.name, nameVi: p.nameVi, stockUnits: stock, threshold });
+    // Chỉ cảnh báo khi đã có nhungQty > 0 từ trước (tránh false alarm khi chưa khởi tạo)
+    if (p.nhungQty > 0 && stock <= threshold) {
+      lowStockProducts.push({
+        id: p.id, name: p.name, nameVi: p.nameVi,
+        stockUnits: stock, threshold,
+        nhungQty: p.nhungQty, brosQty,
+      });
     }
   }
 
   const purchaseActiveCount = ordersByStatus
     .filter((s) => ["confirmed", "in_transit", "arrived"].includes(s.status))
     .reduce((sum, s) => sum + s._count.id, 0);
+
+  // Cảnh báo hệ thống
+  const systemWarnings: string[] = [];
+  if (nhungUninitCount > 0) {
+    systemWarnings.push(`${nhungUninitCount} sản phẩm chưa khởi tạo nhungQty — chạy Agent → "init_nhung"`);
+  }
 
   return Response.json({
     totalOrders,
@@ -133,13 +172,17 @@ export async function GET() {
     totalCustomerDebtVnd: customerDebts.reduce((s, d) => s + d.owedVnd, 0),
     supplierDebtVnd,
     lowStockProducts,
+    systemWarnings,
     pipeline: {
       purchaseActive: purchaseActiveCount,
       productionPending: pendingProductionCount,
       productionActive: inProductionCount,
       shipmentsActive: activeShipmentsCount,
       shipmentsInTransit: inTransitCount,
-      fulfillmentPending: pendingFulfillmentCount,
+      // ✅ Đúng status mới
+      fulfillmentPending: fulfillmentPendingCount,
+      fulfillmentNotified: fulfillmentNotifiedCount,
+      fulfillmentActive: fulfillmentPendingCount + fulfillmentNotifiedCount,
     },
     recentShipments,
     recentProduction,

@@ -1,6 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest } from "next/server";
 import { triggerSheetSync } from "@/lib/sync-trigger";
+import {
+  getShopifyConfig,
+  getVariantMap,
+  getLocationId,
+  pushTotalInventory,
+} from "@/lib/shopify";
 
 const include = {
   purchaseOrder: { include: { supplier: true } },
@@ -114,6 +120,55 @@ export async function PATCH(
   if (body.status === "done") {
     triggerSheetSync("inventory");
     triggerSheetSync("production");
+
+    // ── Option: cộng thẳng nhungQty khi sản xuất xong ─────────────────────
+    // Dùng khi hàng KHÔNG qua ship quốc tế (ví dụ: hàng gia công tại Mỹ,
+    // hoặc hàng VN đã ở Kho Nhung rồi mới sản xuất)
+    // Body: { status: "done", addToNhung: true }
+    if (body.addToNhung) {
+      const productIds: string[] = [];
+      for (const item of order.items) {
+        const qty = item.actualQty ?? item.plannedQty;
+        if (!item.productId || qty <= 0) continue;
+        await prisma.product.update({
+          where: { id: item.productId },
+          data: { nhungQty: { increment: qty } },
+        });
+        productIds.push(item.productId);
+      }
+
+      // Push Shopify cho các sản phẩm bị ảnh hưởng
+      if (productIds.length > 0) {
+        (async () => {
+          try {
+            const cfg = await getShopifyConfig();
+            if (!cfg) return;
+            const [variantMap, locationId, products, brosStocks] = await Promise.all([
+              getVariantMap(cfg),
+              getLocationId(cfg),
+              prisma.product.findMany({
+                where: { id: { in: productIds } },
+                select: { id: true, skuShopify: true, skuAmz: true, nhungQty: true },
+              }),
+              prisma.warehouseStock.findMany({ where: { warehouse: "bros" } }),
+            ]);
+            if (!locationId) return;
+            const brosMap: Record<string, number> = {};
+            for (const s of brosStocks) brosMap[s.sku] = (brosMap[s.sku] ?? 0) + s.inStock;
+            for (const p of products) {
+              if (!p.skuShopify) continue;
+              const brosQty =
+                (p.skuAmz ? brosMap[p.skuAmz] : null) ?? brosMap[p.skuShopify] ?? 0;
+              const total = Math.max(0, Math.round(p.nhungQty + brosQty));
+              await pushTotalInventory(cfg, variantMap, locationId, p.skuShopify, total);
+            }
+            triggerSheetSync("nhung");
+          } catch (e) {
+            console.warn("[production done] Shopify push error:", e);
+          }
+        })();
+      }
+    }
   }
 
   return Response.json(order);

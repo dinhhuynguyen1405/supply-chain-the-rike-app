@@ -39,6 +39,8 @@ export async function PATCH(
   if ("shippingCostVnd" in body) updateData.shippingCostVnd = body.shippingCostVnd ? Number(body.shippingCostVnd) : null;
   if ("packingLaborVnd" in body) updateData.packingLaborVnd = body.packingLaborVnd ? Number(body.packingLaborVnd) : null;
   if ("packingStatus" in body) updateData.packingStatus = body.packingStatus;
+  if ("purchaseType" in body) updateData.purchaseType = body.purchaseType;
+  if ("purchaseDestination" in body) updateData.purchaseDestination = body.purchaseDestination;
 
   const order = await prisma.purchaseOrder.update({
     where: { id },
@@ -52,9 +54,15 @@ export async function PATCH(
 
   triggerSheetSync("purchases");
 
-  // Khi đơn mua chuyển sang "arrived" và không phải đơn mua hộ
-  // → tự động tạo lệnh sản xuất nếu chưa có
-  if (body.status === "arrived" && !order.isBuyOnBehalf) {
+  // Khi đơn mua chuyển sang "arrived":
+  // → Chỉ tự động tạo lệnh sản xuất nếu purchaseType = "raw_material" (nguyên liệu cần đóng gói)
+  // → KHÔNG tạo cho: wholesale (hàng sỉ đã đóng gói), packaging (bao bì), buy_on_behalf
+  const needsProduction =
+    body.status === "arrived" &&
+    !order.isBuyOnBehalf &&
+    order.purchaseType === "raw_material";
+
+  if (needsProduction) {
     const existing = await prisma.productionOrder.findUnique({
       where: { purchaseOrderId: id },
     });
