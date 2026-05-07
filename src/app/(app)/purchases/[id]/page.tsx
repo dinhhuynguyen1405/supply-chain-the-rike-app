@@ -111,7 +111,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
 
   useEffect(() => {
     load();
-    fetch("/api/products?limit=1000")
+    fetch("/api/products?limit=5000")
       .then((r) => r.json())
       .then((d) => setAllProducts(Array.isArray(d) ? d : (d.products ?? [])));
   }, [id]);

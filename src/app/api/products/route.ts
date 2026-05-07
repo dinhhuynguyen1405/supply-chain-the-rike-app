@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   const hasSku = searchParams.get("hasSku") === "1";
   const hasVi = searchParams.get("hasVi") === "1";
   const page = Math.max(1, Number(searchParams.get("page") ?? 1));
-  const limit = Math.min(100, Math.max(10, Number(searchParams.get("limit") ?? 50)));
+  const limit = Math.min(5000, Math.max(10, Number(searchParams.get("limit") ?? 50)));
 
   const where: Record<string, unknown> = {};
 

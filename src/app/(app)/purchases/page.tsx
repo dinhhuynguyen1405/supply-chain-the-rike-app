@@ -79,6 +79,7 @@ export default function PurchasesPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [open, setOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState<Record<number, string>>({});
 
   // Packing confirmation dialog
   const [packingOrder, setPackingOrder] = useState<PurchaseOrder | null>(null);
@@ -117,7 +118,7 @@ export default function PurchasesPage() {
   useEffect(() => {
     load();
     fetch("/api/suppliers").then((r) => r.json()).then(setSuppliers);
-    fetch("/api/products?limit=500")
+    fetch("/api/products?limit=5000")
       .then((r) => r.json())
       .then((d) => setProducts(Array.isArray(d) ? d : (d.products ?? [])));
   }, []);
@@ -566,21 +567,40 @@ export default function PurchasesPage() {
                 </Button>
               </div>
               <div className="space-y-3">
-                {items.map((item, idx) => (
+                {items.map((item, idx) => {
+                  const search = productSearch[idx] ?? "";
+                  const filteredProducts = search.trim()
+                    ? products.filter((p) => {
+                        const q = search.toLowerCase();
+                        return (
+                          p.name.toLowerCase().includes(q) ||
+                          (p.nameVi ?? "").toLowerCase().includes(q)
+                        );
+                      })
+                    : products;
+                  return (
                   <div key={idx} className="rounded-lg border border-gray-100 bg-gray-50 p-3 space-y-2">
                     <div className="flex items-center gap-2">
-                      <select
-                        className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        value={item.productId}
-                        onChange={(e) => updateItem(idx, "productId", e.target.value)}
-                      >
-                        <option value="">Chọn sản phẩm...</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.nameVi ? `${p.nameVi} (${p.name.substring(0, 40)})` : p.name} · {p.unit}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex-1 space-y-1">
+                        <Input
+                          placeholder="🔍 Tìm sản phẩm (VD: lá ổi, trà, 100g...)"
+                          className="text-xs h-7 bg-white"
+                          value={search}
+                          onChange={(e) => setProductSearch((prev) => ({ ...prev, [idx]: e.target.value }))}
+                        />
+                        <select
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          value={item.productId}
+                          onChange={(e) => updateItem(idx, "productId", e.target.value)}
+                        >
+                          <option value="">— Chọn sản phẩm ({filteredProducts.length} kết quả) —</option>
+                          {filteredProducts.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.nameVi ? `${p.nameVi} (${p.name.substring(0, 40)})` : p.name} · {p.unit}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <Input type="number" className="w-20" placeholder="SL" value={item.quantity || ""} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
                       <Input type="number" className="w-32" placeholder="Giá/đv (VND)" value={item.priceVnd || ""} onChange={(e) => updateItem(idx, "priceVnd", e.target.value)} />
                       <span className="w-28 shrink-0 text-right text-xs font-semibold text-gray-700">{formatVND(item.subtotalVnd)}</span>
@@ -590,7 +610,8 @@ export default function PurchasesPage() {
                     </div>
                     <Input placeholder="Ghi chú: Hàng Loại 1, đã deal giá..." className="text-xs bg-white" value={item.notes} onChange={(e) => updateItem(idx, "notes", e.target.value)} />
                   </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="flex justify-end gap-4 pt-1 text-sm text-gray-700">
                 <span>Hàng: <strong>{formatVND(total)}</strong></span>
