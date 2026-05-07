@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Eye, Trash2, X, Package, Truck, CheckCircle2 } from "lucide-react";
+import { Plus, Eye, Trash2, X, Package, Truck, CheckCircle2, UserPlus } from "lucide-react";
 import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils";
 
 interface Product { id: string; name: string; nameVi: string | null; unit: string; }
@@ -77,15 +77,22 @@ export default function PurchasesPage() {
   const [packingLabor, setPackingLabor] = useState("");
   const [packingLoading, setPackingLoading] = useState(false);
 
+  // Quick supplier creation
+  const [newSupplierName, setNewSupplierName] = useState("");
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
+  const [showNewSupplier, setShowNewSupplier] = useState(false);
+
   const [form, setForm] = useState({
     supplierId: "",
     orderDate: new Date().toISOString().split("T")[0],
     expectedDate: "",
+    arrivedDate: new Date().toISOString().split("T")[0],
     shippingCode: "",
     shippingUnit: "",
     shippingCostVnd: "",   // Tiền ship mua về (từ chợ về nhà)
     notes: "",
     isBuyOnBehalf: false,
+    arrivedNow: false,     // Hàng đã về ngay khi tạo đơn
     sellingPriceVnd: "",
     purchaseType: "raw_material",
     purchaseDestination: "kho_huy",
@@ -116,6 +123,28 @@ export default function PurchasesPage() {
     setItems(next);
   }
 
+  async function createSupplierInline() {
+    if (!newSupplierName.trim()) return toast.error("Nhập tên nhà cung cấp");
+    setCreatingSupplier(true);
+    try {
+      const res = await fetch("/api/suppliers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newSupplierName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Lỗi tạo NCC");
+      // Reload suppliers, select new one
+      const refreshed = await fetch("/api/suppliers").then((r) => r.json());
+      setSuppliers(refreshed);
+      setForm((f) => ({ ...f, supplierId: data.id }));
+      setNewSupplierName("");
+      setShowNewSupplier(false);
+      toast.success(`Đã tạo nhà cung cấp "${data.name}" ✓`);
+    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : "Lỗi"); }
+    finally { setCreatingSupplier(false); }
+  }
+
   async function submit() {
     if (!form.supplierId) return toast.error("Chọn nhà cung cấp");
     if (items.some((i) => !i.productId)) return toast.error("Chọn sản phẩm cho tất cả dòng");
@@ -130,11 +159,11 @@ export default function PurchasesPage() {
       }),
     });
     if (res.ok) {
-      toast.success("Đã tạo đơn mua");
+      toast.success(form.arrivedNow ? "Đã tạo đơn — hàng đã về ✓" : "Đã tạo đơn mua");
       setOpen(false);
       load();
       setItems([{ productId: "", quantity: 1, priceVnd: 0, subtotalVnd: 0, notes: "" }]);
-      setForm({ supplierId: "", orderDate: new Date().toISOString().split("T")[0], expectedDate: "", shippingCode: "", shippingUnit: "", shippingCostVnd: "", notes: "", isBuyOnBehalf: false, sellingPriceVnd: "", purchaseType: "raw_material", purchaseDestination: "kho_huy" });
+      setForm({ supplierId: "", orderDate: new Date().toISOString().split("T")[0], expectedDate: "", arrivedDate: new Date().toISOString().split("T")[0], shippingCode: "", shippingUnit: "", shippingCostVnd: "", notes: "", isBuyOnBehalf: false, arrivedNow: false, sellingPriceVnd: "", purchaseType: "raw_material", purchaseDestination: "kho_huy" });
     } else {
       toast.error("Có lỗi xảy ra");
     }
@@ -333,28 +362,46 @@ export default function PurchasesPage() {
 
       {/* Create dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Tạo đơn mua hàng</DialogTitle>
           </DialogHeader>
           <div className="space-y-5 pt-2">
-            {/* Loại đơn */}
-            <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2.5">
-              <div>
-                <p className="text-sm font-medium text-gray-700">Đơn mua hộ</p>
-                <p className="text-xs text-gray-400">
-                  {form.isBuyOnBehalf
-                    ? "Mua giúp người khác → không cần đóng hàng"
-                    : "Mua cho mình → tự động tạo lệnh đóng hàng sau"}
-                </p>
+            {/* Loại đơn + arrived toggle */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* Đơn mua hộ */}
+              <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2.5">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Đơn mua hộ</p>
+                  <p className="text-xs text-gray-400">
+                    {form.isBuyOnBehalf ? "Mua giúp người khác" : "Mua cho mình"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, isBuyOnBehalf: !form.isBuyOnBehalf, sellingPriceVnd: "" })}
+                  className={`relative h-5 w-9 rounded-full transition-colors ${form.isBuyOnBehalf ? "bg-purple-500" : "bg-gray-200"}`}
+                >
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.isBuyOnBehalf ? "translate-x-4" : "translate-x-0.5"}`} />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, isBuyOnBehalf: !form.isBuyOnBehalf, sellingPriceVnd: "" })}
-                className={`relative h-5 w-9 rounded-full transition-colors ${form.isBuyOnBehalf ? "bg-purple-500" : "bg-gray-200"}`}
-              >
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.isBuyOnBehalf ? "translate-x-4" : "translate-x-0.5"}`} />
-              </button>
+
+              {/* Hàng đã về ngay */}
+              <div className={`flex items-center justify-between rounded-lg border px-3 py-2.5 transition-colors ${form.arrivedNow ? "border-green-200 bg-green-50" : "border-gray-200"}`}>
+                <div>
+                  <p className={`text-sm font-medium ${form.arrivedNow ? "text-green-700" : "text-gray-700"}`}>Hàng đã về ngay</p>
+                  <p className="text-xs text-gray-400">
+                    {form.arrivedNow ? "Tạo đơn + đánh dấu đã nhận hàng" : "Chờ cập nhật sau khi hàng về"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, arrivedNow: !form.arrivedNow })}
+                  className={`relative h-5 w-9 rounded-full transition-colors ${form.arrivedNow ? "bg-green-500" : "bg-gray-200"}`}
+                >
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.arrivedNow ? "translate-x-4" : "translate-x-0.5"}`} />
+                </button>
+              </div>
             </div>
 
             {/* Loại hàng + điểm đến */}
@@ -367,7 +414,6 @@ export default function PurchasesPage() {
                     value={form.purchaseType}
                     onChange={(e) => {
                       const t = e.target.value;
-                      // auto-set destination based on type
                       const dest = t === "wholesale" ? "kho_nhung" : t === "packaging" ? "kho_huy" : "kho_huy";
                       setForm({ ...form, purchaseType: t, purchaseDestination: dest });
                     }}
@@ -399,30 +445,77 @@ export default function PurchasesPage() {
 
             {/* Basic info */}
             <div className="grid grid-cols-2 gap-4">
+              {/* Nhà cung cấp + quick create */}
               <div className="col-span-2 space-y-1.5">
-                <Label>Nhà cung cấp *</Label>
-                <select
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  value={form.supplierId}
-                  onChange={(e) => setForm({ ...form, supplierId: e.target.value })}
-                >
-                  <option value="">Chọn nhà cung cấp...</option>
-                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                <div className="flex items-center justify-between">
+                  <Label>Nhà cung cấp *</Label>
+                  <button
+                    type="button"
+                    className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                    onClick={() => setShowNewSupplier(!showNewSupplier)}
+                  >
+                    <UserPlus className="h-3 w-3" />
+                    {showNewSupplier ? "Huỷ" : "Thêm NCC mới"}
+                  </button>
+                </div>
+                {showNewSupplier ? (
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Tên nhà cung cấp (VD: Dương, Chị Ba chợ Bình Điền...)"
+                      value={newSupplierName}
+                      onChange={(e) => setNewSupplierName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && createSupplierInline()}
+                      autoFocus
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={createSupplierInline}
+                      disabled={creatingSupplier || !newSupplierName.trim()}
+                      className="bg-blue-600 hover:bg-blue-700 shrink-0"
+                    >
+                      {creatingSupplier ? "..." : "Tạo"}
+                    </Button>
+                  </div>
+                ) : (
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={form.supplierId}
+                    onChange={(e) => setForm({ ...form, supplierId: e.target.value })}
+                  >
+                    <option value="">Chọn nhà cung cấp...</option>
+                    {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                )}
               </div>
+
               <div className="space-y-1.5">
                 <Label>Ngày mua *</Label>
                 <Input type="date" value={form.orderDate} onChange={(e) => setForm({ ...form, orderDate: e.target.value })} />
               </div>
-              <div className="space-y-1.5">
-                <Label>Dự kiến đến</Label>
-                <Input type="date" value={form.expectedDate} onChange={(e) => setForm({ ...form, expectedDate: e.target.value })} />
-              </div>
+              {form.arrivedNow ? (
+                <div className="space-y-1.5">
+                  <Label className="text-green-700 flex items-center gap-1">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Ngày nhận hàng
+                  </Label>
+                  <Input
+                    type="date"
+                    value={form.arrivedDate}
+                    className="border-green-200 focus:border-green-400"
+                    onChange={(e) => setForm({ ...form, arrivedDate: e.target.value })}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label>Dự kiến đến</Label>
+                  <Input type="date" value={form.expectedDate} onChange={(e) => setForm({ ...form, expectedDate: e.target.value })} />
+                </div>
+              )}
 
               {/* Vận chuyển + tiền ship */}
               <div className="space-y-1.5">
                 <Label>Đơn vị vận chuyển</Label>
-                <Input placeholder="Grab, xe ôm, tự đi..." value={form.shippingUnit} onChange={(e) => setForm({ ...form, shippingUnit: e.target.value })} />
+                <Input placeholder="Grab, xe ôm, tự đi, giao tận nhà..." value={form.shippingUnit} onChange={(e) => setForm({ ...form, shippingUnit: e.target.value })} />
               </div>
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1">
@@ -431,7 +524,7 @@ export default function PurchasesPage() {
                 </Label>
                 <Input
                   type="number"
-                  placeholder="VD: 50000"
+                  placeholder="VD: 50000 — để trống nếu giao tận nhà miễn phí"
                   value={form.shippingCostVnd}
                   onChange={(e) => setForm({ ...form, shippingCostVnd: e.target.value })}
                 />

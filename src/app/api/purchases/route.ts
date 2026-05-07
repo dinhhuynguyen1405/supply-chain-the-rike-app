@@ -24,6 +24,8 @@ export async function POST(req: NextRequest) {
   );
 
   const isBuyOnBehalf = body.isBuyOnBehalf ?? false;
+  // arrivedNow: hàng đã về ngay khi tạo đơn → status=arrived, không cần chờ
+  const arrivedNow = body.arrivedNow ?? false;
 
   const order = await prisma.purchaseOrder.create({
     data: {
@@ -32,14 +34,22 @@ export async function POST(req: NextRequest) {
       isBuyOnBehalf,
       orderDate: new Date(body.orderDate),
       expectedDate: body.expectedDate ? new Date(body.expectedDate) : null,
-      status: "confirmed",
+      arrivedDate: arrivedNow ? new Date(body.arrivedDate ?? body.orderDate) : null,
+      status: arrivedNow ? "arrived" : "confirmed",
       shippingCode: body.shippingCode || null,
       shippingUnit: body.shippingUnit || null,
       notes: body.notes || null,
       totalVnd,
       shippingCostVnd: body.shippingCostVnd ? Number(body.shippingCostVnd) : null,
-      // Đơn mua hộ không cần đóng hàng; đơn thường → tự động tạo lệnh đóng khi đến
-      packingStatus: isBuyOnBehalf ? null : "pending",
+      purchaseType: body.purchaseType || "raw_material",
+      purchaseDestination: body.purchaseDestination || "kho_huy",
+      // arrivedNow + raw_material → packingStatus=pending (cần đóng gói)
+      // arrivedNow + wholesale → packingStatus=done (đã đóng sẵn rồi)
+      packingStatus: isBuyOnBehalf
+        ? null
+        : arrivedNow && (body.purchaseType === "wholesale")
+          ? "done"
+          : "pending",
       sellingPriceVnd: body.sellingPriceVnd ? Number(body.sellingPriceVnd) : null,
       items: {
         create: body.items.map(

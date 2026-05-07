@@ -8,7 +8,7 @@ import { getShopifyConfig, getVariantMap, getLocationId, pushTotalInventory } fr
 // NOTE: không gọi Shopify tại đây — shopifyQty = nhungQty + brosQty theo công thức
 
 export async function GET() {
-  const [products, brosStocks] = await Promise.all([
+  const [products, brosStocks, productionItems] = await Promise.all([
     prisma.product.findMany({
       orderBy: [{ nameVi: "asc" }, { name: "asc" }],
       select: {
@@ -24,10 +24,25 @@ export async function GET() {
       },
     }),
     prisma.warehouseStock.findMany({ where: { warehouse: "bros" } }),
+    // Tồn kho VN = sản phẩm đã sản xuất xong, chưa ship sang Mỹ
+    prisma.productionItem.findMany({
+      where: {
+        productionOrder: { status: "done" },
+        actualQty: { not: null },
+      },
+      select: { productId: true, actualQty: true },
+    }),
   ]);
 
+  // brosQty map: sku → inStock
   const brosMap: Record<string, number> = {};
   for (const s of brosStocks) brosMap[s.sku] = (brosMap[s.sku] ?? 0) + s.inStock;
+
+  // vnQty map: productId → actualQty (sum)
+  const vnMap: Record<string, number> = {};
+  for (const pi of productionItems) {
+    if (pi.actualQty) vnMap[pi.productId] = (vnMap[pi.productId] ?? 0) + pi.actualQty;
+  }
 
   const result = products.map((p) => {
     const brosQty =
@@ -35,6 +50,7 @@ export async function GET() {
       (p.skuAmz    ? brosMap[p.skuAmz]    : null) ??
       (p.skuShopify ? brosMap[p.skuShopify] : null) ??
       0;
+    const vnQty = vnMap[p.id] ?? 0;
     return {
       id: p.id,
       name: p.name,
@@ -44,6 +60,7 @@ export async function GET() {
       priceUsd: p.priceUsd,
       nhungQty: p.nhungQty,
       brosQty,
+      vnQty,
       total: p.nhungQty + brosQty,
     };
   });
