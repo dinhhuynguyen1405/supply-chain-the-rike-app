@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, TrendingUp, Package,
   Users, Link2, RefreshCw, Boxes, ShoppingBag, Truck,
   ClipboardList, Wallet, Search, Settings, Factory,
-  ChevronRight, Bot,
+  ChevronRight, Bot, BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -27,8 +27,9 @@ const WAREHOUSE_ITEMS: { href: string; icon: React.ElementType; label: string }[
 ];
 
 const FINANCE_ITEMS: { href: string; icon: React.ElementType; label: string }[] = [
-  { href: "/sales", icon: TrendingUp, label: "Bán hàng" },
-  { href: "/fund",  icon: Wallet,     label: "Sổ quỹ" },
+  { href: "/sales",   icon: TrendingUp, label: "Bán hàng" },
+  { href: "/fund",    icon: Wallet,     label: "Sổ quỹ" },
+  { href: "/restock", icon: BarChart3,  label: "Phân tích mua thêm" },
 ];
 
 const TOOLS_ITEMS: { href: string; icon: React.ElementType; label: string }[] = [
