@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Save, Plus, Trash2, CheckCircle2, Clock, ArrowUpCircle, ArrowDownCircle } from "lucide-react";
+import { ArrowLeft, Save, Plus, Trash2, CheckCircle2, Clock, ArrowUpCircle, ArrowDownCircle, Factory } from "lucide-react";
 import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils";
 
 interface Payment {
@@ -48,7 +48,31 @@ interface Order {
     product: { id: string; name: string; nameVi: string | null; unit: string; skuShopify: string | null; gramsPerUnit: number | null };
   }[];
   payments: Payment[];
+  productionOrder: {
+    id: string;
+    code: string;
+    status: string;
+    items: {
+      plannedQty: number;
+      actualQty: number | null;
+      gramsPerPack: number | null;
+      product: { id: string; nameVi: string | null; name: string };
+    }[];
+  } | null;
 }
+
+const PROD_STATUS_LABELS: Record<string, string> = {
+  pending: "Chờ đóng gói",
+  in_production: "Đang đóng gói",
+  done: "Đã đóng xong",
+  cancelled: "Đã huỷ",
+};
+const PROD_STATUS_COLORS: Record<string, string> = {
+  pending: "bg-amber-100 text-amber-700",
+  in_production: "bg-blue-100 text-blue-700",
+  done: "bg-green-100 text-green-700",
+  cancelled: "bg-gray-100 text-gray-500",
+};
 
 const STATUSES = ["draft", "confirmed", "shipping", "arrived", "completed", "cancelled"];
 const METHODS = ["Chuyển khoản", "Tiền mặt", "Momo", "ZaloPay", "Khác"];
@@ -66,6 +90,10 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const [paymentForm, setPaymentForm] = useState({
     amount: "", paidAt: new Date().toISOString().split("T")[0], method: "Chuyển khoản", notes: "",
   });
+  // Đổi sản phẩm liên kết của purchase item
+  const [allProducts, setAllProducts] = useState<{ id: string; name: string; nameVi: string | null; unit: string; gramsPerUnit: number | null }[]>([]);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingProductId, setEditingProductId] = useState<string>("");
 
   const load = () =>
     fetch(`/api/purchases/${id}`).then((r) => r.json()).then((o: Order) => {
@@ -81,7 +109,12 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       });
     });
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    load();
+    fetch("/api/products?limit=1000")
+      .then((r) => r.json())
+      .then((d) => setAllProducts(Array.isArray(d) ? d : (d.products ?? [])));
+  }, [id]);
 
   async function save() {
     const res = await fetch(`/api/purchases/${id}`, {
@@ -119,6 +152,22 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     });
     if (res.ok) { toast.success("Đã ghi nhận"); setPaymentOpen(false); load(); }
     else toast.error("Có lỗi xảy ra");
+  }
+
+  async function changeItemProduct(itemId: string, newProductId: string) {
+    if (!newProductId) return;
+    const res = await fetch(`/api/purchases/${id}/items`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId, productId: newProductId }),
+    });
+    if (res.ok) {
+      toast.success("Đã cập nhật sản phẩm ✓");
+      setEditingItemId(null);
+      load();
+    } else {
+      toast.error("Lỗi cập nhật");
+    }
   }
 
   async function deletePayment(paymentId: string) {
@@ -209,16 +258,51 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   return (
                     <tr key={item.id}>
                       <td className="py-2.5">
-                        <a href={`/products/${item.product.id}`} className="font-medium text-gray-900 hover:text-green-600 hover:underline">
-                          {item.product.nameVi || item.product.name}
-                        </a>
-                        {item.product.skuShopify && (
-                          <p className="text-xs text-gray-400 font-mono">SKU: {item.product.skuShopify}</p>
-                        )}
-                        {item.notes && (
-                          <p className="mt-0.5 text-xs text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block">
-                            📝 {item.notes}
-                          </p>
+                        {editingItemId === item.id ? (
+                          <div className="flex items-center gap-2">
+                            <select
+                              className="flex-1 rounded-md border border-indigo-300 bg-white px-2 py-1 text-sm ring-1 ring-indigo-200"
+                              value={editingProductId}
+                              onChange={(e) => setEditingProductId(e.target.value)}
+                              autoFocus
+                            >
+                              <option value="">Chọn sản phẩm đúng...</option>
+                              {allProducts.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.nameVi ? `${p.nameVi} — ${p.name.slice(0, 40)}` : p.name} · {p.unit}
+                                  {p.gramsPerUnit ? ` (${p.gramsPerUnit}g/gói)` : ""}
+                                </option>
+                              ))}
+                            </select>
+                            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 shrink-0 h-7 text-xs"
+                              onClick={() => changeItemProduct(item.id, editingProductId)}
+                              disabled={!editingProductId}
+                            >Lưu</Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs"
+                              onClick={() => setEditingItemId(null)}
+                            >Huỷ</Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-1">
+                            <div>
+                              <a href={`/products/${item.product.id}`} className="font-medium text-gray-900 hover:text-green-600 hover:underline">
+                                {item.product.nameVi || item.product.name}
+                              </a>
+                              {item.product.skuShopify && (
+                                <p className="text-xs text-gray-400 font-mono">SKU: {item.product.skuShopify}</p>
+                              )}
+                              {item.notes && (
+                                <p className="mt-0.5 text-xs text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block">
+                                  📝 {item.notes}
+                                </p>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => { setEditingItemId(item.id); setEditingProductId(item.product.id); }}
+                              className="ml-1 mt-0.5 shrink-0 text-[10px] text-gray-300 hover:text-indigo-500 hover:underline"
+                              title="Đổi sản phẩm liên kết"
+                            >✎</button>
+                          </div>
                         )}
                       </td>
                       <td className="py-2.5 text-right text-gray-600">{item.quantity} {item.product.unit}</td>
@@ -249,6 +333,80 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
               </tfoot>
             </table>
           </Card>
+
+          {/* Lệnh sản xuất / đóng gói */}
+          {order.productionOrder && (
+            <Card className={`p-5 border-2 ${
+              order.productionOrder.status === "done" ? "border-green-200 bg-green-50/30" :
+              order.productionOrder.status === "in_production" ? "border-blue-200 bg-blue-50/30" :
+              "border-amber-200 bg-amber-50/30"
+            }`}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Factory className="h-4 w-4 text-indigo-600" />
+                  <h2 className="text-sm font-semibold text-gray-800">Lệnh sản xuất / đóng gói</h2>
+                  <span className="font-mono text-xs text-gray-500">{order.productionOrder.code}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge className={`text-xs ${PROD_STATUS_COLORS[order.productionOrder.status] ?? "bg-gray-100 text-gray-500"}`}>
+                    {PROD_STATUS_LABELS[order.productionOrder.status] ?? order.productionOrder.status}
+                  </Badge>
+                  <a
+                    href="/production"
+                    className="text-xs text-indigo-600 hover:underline"
+                  >
+                    Mở trang sản xuất →
+                  </a>
+                </div>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="text-xs text-gray-500 border-b border-gray-200">
+                  <tr>
+                    <th className="pb-2 text-left font-medium">Sản phẩm</th>
+                    <th className="pb-2 text-right font-medium text-amber-600">Dự kiến</th>
+                    <th className="pb-2 text-right font-medium text-green-600">Thực tế</th>
+                    <th className="pb-2 text-right font-medium text-gray-400">Quy cách</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {order.productionOrder.items.map((pi, idx) => (
+                    <tr key={idx}>
+                      <td className="py-2.5 font-medium text-gray-900">
+                        {pi.product.nameVi ?? pi.product.name}
+                      </td>
+                      <td className="py-2.5 text-right">
+                        <span className="font-bold text-amber-700">{Math.round(pi.plannedQty)} gói</span>
+                      </td>
+                      <td className="py-2.5 text-right">
+                        {pi.actualQty != null
+                          ? <span className="font-bold text-green-700">{Math.round(pi.actualQty)} gói</span>
+                          : <span className="text-gray-300">—</span>
+                        }
+                      </td>
+                      <td className="py-2.5 text-right text-xs text-gray-400">
+                        {pi.gramsPerPack ? `${pi.gramsPerPack}g/gói` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t border-gray-200">
+                  <tr>
+                    <td className="pt-2 text-xs text-gray-500">Tổng</td>
+                    <td className="pt-2 text-right font-bold text-amber-700">
+                      {Math.round(order.productionOrder.items.reduce((s, i) => s + i.plannedQty, 0))} gói
+                    </td>
+                    <td className="pt-2 text-right font-bold text-green-700">
+                      {order.productionOrder.items.some(i => i.actualQty != null)
+                        ? `${Math.round(order.productionOrder.items.reduce((s, i) => s + (i.actualQty ?? 0), 0))} gói`
+                        : "—"
+                      }
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </Card>
+          )}
 
           {/* Two-sided payment tracking */}
           <Card className="p-5">

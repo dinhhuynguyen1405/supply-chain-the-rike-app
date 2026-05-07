@@ -13,12 +13,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Eye, Trash2, X, Package, Truck, CheckCircle2, UserPlus } from "lucide-react";
+import { Plus, Eye, Trash2, X, Package, Truck, CheckCircle2, UserPlus, Factory } from "lucide-react";
 import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils";
 
 interface Product { id: string; name: string; nameVi: string | null; unit: string; }
 interface Supplier { id: string; name: string; }
 interface OrderItem { productId: string; quantity: number; priceVnd: number; subtotalVnd: number; notes: string; }
+
+interface ProductionOrderSummary {
+  id: string;
+  code: string;
+  status: string;
+  items: { plannedQty: number; actualQty: number | null; product: { nameVi: string | null; name: string } }[];
+}
 
 interface PurchaseOrder {
   id: string;
@@ -39,6 +46,7 @@ interface PurchaseOrder {
   supplier: Supplier;
   items: { product: { name: string; nameVi: string | null }; quantity: number; priceVnd: number }[];
   payments: { amount: number; direction: string }[];
+  productionOrder: ProductionOrderSummary | null;
 }
 
 const PURCHASE_TYPE_LABELS: Record<string, string> = {
@@ -297,6 +305,24 @@ export default function PurchasesPage() {
                         {o.items.slice(0, 3).map(i => i.product.nameVi ?? i.product.name).join(" · ")}
                         {o.items.length > 3 && ` +${o.items.length - 3}`}
                       </p>
+                      {/* Lệnh sản xuất liên kết */}
+                      {o.productionOrder && (
+                        <Link
+                          href={`/production`}
+                          className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                        >
+                          <Factory className="h-3 w-3" />
+                          {o.productionOrder.code}
+                          {" · "}
+                          {o.productionOrder.items.reduce((s, i) => s + (i.actualQty ?? i.plannedQty), 0)} gói
+                          {o.productionOrder.status === "done"
+                            ? <span className="text-green-600 ml-0.5">✓ xong</span>
+                            : o.productionOrder.status === "in_production"
+                            ? <span className="text-amber-600 ml-0.5">đang đóng</span>
+                            : <span className="text-gray-400 ml-0.5">chờ đóng</span>
+                          }
+                        </Link>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-500">{formatDate(o.orderDate)}</td>
                     <td className="px-4 py-3">

@@ -14,6 +14,13 @@ export async function GET(
       supplier: true,
       items: { include: { product: true } },
       payments: { orderBy: { paidAt: "asc" } },
+      productionOrder: {
+        include: {
+          items: {
+            include: { product: { select: { id: true, nameVi: true, name: true } } },
+          },
+        },
+      },
     },
   });
   if (!order) return new Response("Not found", { status: 404 });

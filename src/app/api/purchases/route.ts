@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest } from "next/server";
-import { generateOrderCode } from "@/lib/utils";
+import { generateOrderCode, generateProductionCode, calcPlannedQty } from "@/lib/utils";
 import { triggerSheetSync } from "@/lib/sync-trigger";
 
 export async function GET() {
@@ -10,6 +10,20 @@ export async function GET() {
       supplier: true,
       items: { include: { product: true } },
       payments: true,
+      productionOrder: {
+        select: {
+          id: true,
+          code: true,
+          status: true,
+          items: {
+            select: {
+              plannedQty: true,
+              actualQty: true,
+              product: { select: { nameVi: true, name: true } },
+            },
+          },
+        },
+      },
     },
   });
   return Response.json(orders);
@@ -68,6 +82,35 @@ export async function POST(req: NextRequest) {
       items: { include: { product: true } },
     },
   });
+
+  // Nếu arrivedNow + raw_material → auto tạo ProductionOrder ngay (giống PATCH arrived)
+  if (arrivedNow && !isBuyOnBehalf && (body.purchaseType || "raw_material") === "raw_material") {
+    try {
+      await prisma.productionOrder.create({
+        data: {
+          code: generateProductionCode(),
+          purchaseOrderId: order.id,
+          status: "pending",
+          items: {
+            create: order.items.map((pi) => ({
+              purchaseItemId: pi.id,
+              productId: pi.productId,
+              gramsPerPack:  pi.product.gramsPerUnit,
+              piecesPerUnit: pi.product.piecesPerUnit,
+              piecesPerPack: pi.product.piecesPerPack,
+              plannedQty: calcPlannedQty(
+                pi.quantity,
+                pi.product.unit,
+                pi.product.gramsPerUnit,
+                pi.product.piecesPerUnit,
+                pi.product.piecesPerPack,
+              ),
+            })),
+          },
+        },
+      });
+    } catch { /* Nếu đã tồn tại → bỏ qua */ }
+  }
 
   triggerSheetSync("purchases");
   return Response.json(order, { status: 201 });
