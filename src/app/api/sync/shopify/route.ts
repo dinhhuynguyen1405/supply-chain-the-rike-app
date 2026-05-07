@@ -60,6 +60,8 @@ export async function POST(req: NextRequest) {
 
       let createdCount = 0;
       let updatedCount = 0;
+      let unlinkedCount = 0;
+      let deletedCount = 0;
 
       for (const product of allProducts) {
         // Get all variant SKUs for this product
@@ -124,10 +126,67 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // ── Xử lý sản phẩm đã bị XOÁ trên Shopify ─────────────────────────────
+      // Build tập hợp SKU + title hiện tại trên Shopify
+      const shopifySkus = new Set<string>();
+      const shopifyTitles = new Set<string>();
+      for (const p of allProducts) {
+        shopifyTitles.add(p.title);
+        for (const v of p.variants) {
+          if (v.sku) shopifySkus.add(v.sku);
+        }
+      }
+
+      // Lấy tất cả sản phẩm trong DB có skuShopify
+      const dbLinkedProducts = await prisma.product.findMany({
+        where: { skuShopify: { not: null } },
+        select: {
+          id: true,
+          name: true,
+          skuShopify: true,
+          _count: {
+            select: {
+              purchaseItems: true,
+              salesItems: true,
+              productionItems: true,
+              fulfillmentItems: true,
+            },
+          },
+        },
+      });
+
+      for (const p of dbLinkedProducts) {
+        if (!p.skuShopify) continue;
+        // Nếu SKU VÀ title đều không còn trên Shopify → sản phẩm đã bị xoá
+        const stillOnShopify = shopifySkus.has(p.skuShopify) || shopifyTitles.has(p.name);
+        if (stillOnShopify) continue;
+
+        const hasHistory =
+          p._count.purchaseItems > 0 ||
+          p._count.salesItems > 0 ||
+          p._count.productionItems > 0 ||
+          p._count.fulfillmentItems > 0;
+
+        if (hasHistory) {
+          // Có lịch sử → giữ lại record, chỉ bỏ link Shopify + xoá ảnh/giá cache
+          await prisma.product.update({
+            where: { id: p.id },
+            data: { skuShopify: null, imageUrl: null, priceUsd: null },
+          });
+          unlinkedCount++;
+        } else {
+          // Không có lịch sử → xoá hẳn khỏi DB
+          await prisma.product.delete({ where: { id: p.id } });
+          deletedCount++;
+        }
+      }
+
       return NextResponse.json({
         success: true,
         created: createdCount,
         updated: updatedCount,
+        unlinked: unlinkedCount,   // Sản phẩm bị xoá trên Shopify nhưng còn lịch sử → giữ lại, bỏ link
+        deleted: deletedCount,     // Sản phẩm bị xoá trên Shopify, không có lịch sử → xoá hẳn
         total: allProducts.length,
       });
     } else {
