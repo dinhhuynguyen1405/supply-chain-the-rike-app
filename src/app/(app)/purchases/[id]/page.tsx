@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Save, Plus, Trash2, CheckCircle2, Clock, ArrowUpCircle, ArrowDownCircle, Factory } from "lucide-react";
+import { ArrowLeft, Save, Plus, Trash2, CheckCircle2, Clock, ArrowUpCircle, ArrowDownCircle, Factory, Pencil, X } from "lucide-react";
 import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils";
 
 interface Payment {
@@ -90,10 +90,17 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const [paymentForm, setPaymentForm] = useState({
     amount: "", paidAt: new Date().toISOString().split("T")[0], method: "Chuyển khoản", notes: "",
   });
-  // Đổi sản phẩm liên kết của purchase item
+  // Products list for selectors
   const [allProducts, setAllProducts] = useState<{ id: string; name: string; nameVi: string | null; unit: string; gramsPerUnit: number | null }[]>([]);
+  // Inline edit state cho từng dòng hàng
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string>("");
+  const [editingQty, setEditingQty] = useState<string>("");
+  const [editingPrice, setEditingPrice] = useState<string>("");
+  const [editingProductSearch, setEditingProductSearch] = useState<string>("");
+  // Thêm dòng hàng mới
+  const [addingItem, setAddingItem] = useState(false);
+  const [newItem, setNewItem] = useState({ productId: "", quantity: "1", priceVnd: "", notes: "", productSearch: "" });
 
   const load = () =>
     fetch(`/api/purchases/${id}`).then((r) => r.json()).then((o: Order) => {
@@ -154,19 +161,64 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     else toast.error("Có lỗi xảy ra");
   }
 
-  async function changeItemProduct(itemId: string, newProductId: string) {
-    if (!newProductId) return;
+  function openEditItem(item: Order["items"][0]) {
+    setEditingItemId(item.id);
+    setEditingProductId(item.product.id);
+    setEditingQty(String(item.quantity));
+    setEditingPrice(String(item.priceVnd));
+    setEditingProductSearch("");
+  }
+
+  async function saveItem(itemId: string) {
+    const body: Record<string, unknown> = { itemId };
+    if (editingProductId) body.productId = editingProductId;
+    if (editingQty) body.quantity = Number(editingQty);
+    if (editingPrice !== "") body.priceVnd = Number(editingPrice);
     const res = await fetch(`/api/purchases/${id}/items`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itemId, productId: newProductId }),
+      body: JSON.stringify(body),
     });
     if (res.ok) {
-      toast.success("Đã cập nhật sản phẩm ✓");
+      toast.success("Đã cập nhật dòng hàng ✓");
       setEditingItemId(null);
       load();
     } else {
       toast.error("Lỗi cập nhật");
+    }
+  }
+
+  async function deleteItem(itemId: string) {
+    if (!confirm("Xoá dòng hàng này khỏi đơn?")) return;
+    const res = await fetch(`/api/purchases/${id}/items`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId }),
+    });
+    if (res.ok) { toast.success("Đã xoá dòng hàng"); load(); }
+    else toast.error("Lỗi xoá");
+  }
+
+  async function addNewItem() {
+    if (!newItem.productId) return toast.error("Chọn sản phẩm");
+    if (!newItem.quantity || Number(newItem.quantity) <= 0) return toast.error("Nhập số lượng hợp lệ");
+    const res = await fetch(`/api/purchases/${id}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        productId: newItem.productId,
+        quantity: Number(newItem.quantity),
+        priceVnd: Number(newItem.priceVnd) || 0,
+        notes: newItem.notes || null,
+      }),
+    });
+    if (res.ok) {
+      toast.success("Đã thêm dòng hàng ✓");
+      setAddingItem(false);
+      setNewItem({ productId: "", quantity: "1", priceVnd: "", notes: "", productSearch: "" });
+      load();
+    } else {
+      toast.error("Lỗi thêm dòng hàng");
     }
   }
 
@@ -238,95 +290,229 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
         <div className="lg:col-span-2 space-y-6">
           {/* Items */}
           <Card className="p-5">
-            <h2 className="mb-4 text-sm font-semibold text-gray-700">Danh sách hàng</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-700">Danh sách hàng</h2>
+              <Button
+                size="sm" variant="outline"
+                className="h-7 text-xs border-green-300 text-green-700 hover:bg-green-50"
+                onClick={() => { setAddingItem(true); setNewItem({ productId: "", quantity: "1", priceVnd: "", notes: "", productSearch: "" }); }}
+              >
+                <Plus className="mr-1 h-3 w-3" /> Thêm dòng
+              </Button>
+            </div>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
                   <th className="pb-2 text-left font-medium text-gray-500">Sản phẩm</th>
-                  <th className="pb-2 text-right font-medium text-gray-500">Số lượng mua</th>
+                  <th className="pb-2 text-right font-medium text-gray-500">Số lượng</th>
                   <th className="pb-2 text-right font-medium text-gray-500">Thành phẩm</th>
                   <th className="pb-2 text-right font-medium text-gray-500">Đơn giá</th>
                   <th className="pb-2 text-right font-medium text-gray-500">Thành tiền</th>
+                  <th className="pb-2 w-16" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {order.items.map((item) => {
+                  const isEditing = editingItemId === item.id;
                   const g = item.product.gramsPerUnit;
                   const yieldPacks = g && item.product.unit === "kg"
                     ? Math.floor((item.quantity * 1000) / g)
                     : null;
+                  const filteredProducts = editingProductSearch.trim()
+                    ? allProducts.filter((p) => {
+                        const q = editingProductSearch.toLowerCase();
+                        return p.name.toLowerCase().includes(q) || (p.nameVi ?? "").toLowerCase().includes(q);
+                      })
+                    : allProducts;
                   return (
-                    <tr key={item.id}>
+                    <tr key={item.id} className={isEditing ? "bg-indigo-50/50" : ""}>
                       <td className="py-2.5">
-                        {editingItemId === item.id ? (
-                          <div className="flex items-center gap-2">
+                        {isEditing ? (
+                          <div className="space-y-1">
+                            <Input
+                              placeholder="🔍 Tìm sản phẩm..."
+                              className="h-7 text-xs"
+                              value={editingProductSearch}
+                              onChange={(e) => setEditingProductSearch(e.target.value)}
+                            />
                             <select
-                              className="flex-1 rounded-md border border-indigo-300 bg-white px-2 py-1 text-sm ring-1 ring-indigo-200"
+                              className="w-full rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs"
                               value={editingProductId}
                               onChange={(e) => setEditingProductId(e.target.value)}
-                              autoFocus
                             >
-                              <option value="">Chọn sản phẩm đúng...</option>
-                              {allProducts.map((p) => (
+                              <option value="">— {filteredProducts.length} sản phẩm —</option>
+                              {filteredProducts.map((p) => (
                                 <option key={p.id} value={p.id}>
-                                  {p.nameVi ? `${p.nameVi} — ${p.name.slice(0, 40)}` : p.name} · {p.unit}
+                                  {p.nameVi ? `${p.nameVi} — ${p.name.slice(0, 35)}` : p.name} · {p.unit}
                                   {p.gramsPerUnit ? ` (${p.gramsPerUnit}g/gói)` : ""}
                                 </option>
                               ))}
                             </select>
-                            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 shrink-0 h-7 text-xs"
-                              onClick={() => changeItemProduct(item.id, editingProductId)}
-                              disabled={!editingProductId}
-                            >Lưu</Button>
-                            <Button size="sm" variant="ghost" className="h-7 text-xs"
-                              onClick={() => setEditingItemId(null)}
-                            >Huỷ</Button>
                           </div>
                         ) : (
-                          <div className="flex items-start gap-1">
-                            <div>
-                              <a href={`/products/${item.product.id}`} className="font-medium text-gray-900 hover:text-green-600 hover:underline">
-                                {item.product.nameVi || item.product.name}
-                              </a>
-                              {item.product.skuShopify && (
-                                <p className="text-xs text-gray-400 font-mono">SKU: {item.product.skuShopify}</p>
-                              )}
-                              {item.notes && (
-                                <p className="mt-0.5 text-xs text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block">
-                                  📝 {item.notes}
-                                </p>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => { setEditingItemId(item.id); setEditingProductId(item.product.id); }}
-                              className="ml-1 mt-0.5 shrink-0 text-[10px] text-gray-300 hover:text-indigo-500 hover:underline"
-                              title="Đổi sản phẩm liên kết"
-                            >✎</button>
+                          <div>
+                            <a href={`/products/${item.product.id}`} className="font-medium text-gray-900 hover:text-green-600 hover:underline">
+                              {item.product.nameVi || item.product.name}
+                            </a>
+                            {item.product.skuShopify && (
+                              <p className="text-xs text-gray-400 font-mono">SKU: {item.product.skuShopify}</p>
+                            )}
+                            {item.notes && (
+                              <p className="mt-0.5 text-xs text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block">
+                                📝 {item.notes}
+                              </p>
+                            )}
                           </div>
                         )}
                       </td>
-                      <td className="py-2.5 text-right text-gray-600">{item.quantity} {item.product.unit}</td>
                       <td className="py-2.5 text-right">
-                        {yieldPacks != null ? (
+                        {isEditing ? (
+                          <Input
+                            type="number"
+                            className="w-20 h-7 text-xs text-right ml-auto"
+                            value={editingQty}
+                            onChange={(e) => setEditingQty(e.target.value)}
+                          />
+                        ) : (
+                          <span className="text-gray-600">{item.quantity} {item.product.unit}</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 text-right">
+                        {isEditing ? (
+                          <span className="text-xs text-gray-400">—</span>
+                        ) : yieldPacks != null ? (
                           <span className="font-semibold text-green-700">~{yieldPacks} gói</span>
                         ) : (
                           <span className="text-gray-300">—</span>
                         )}
                       </td>
-                      <td className="py-2.5 text-right text-gray-600">{formatVND(item.priceVnd)}</td>
-                      <td className="py-2.5 text-right font-medium text-gray-900">{formatVND(item.subtotalVnd)}</td>
+                      <td className="py-2.5 text-right">
+                        {isEditing ? (
+                          <Input
+                            type="number"
+                            className="w-28 h-7 text-xs text-right ml-auto"
+                            value={editingPrice}
+                            onChange={(e) => setEditingPrice(e.target.value)}
+                          />
+                        ) : (
+                          <span className="text-gray-600">{formatVND(item.priceVnd)}</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 text-right font-medium text-gray-900">
+                        {isEditing
+                          ? <span className="text-xs text-indigo-600 font-semibold">{formatVND(Number(editingQty || 0) * Number(editingPrice || 0))}</span>
+                          : formatVND(item.subtotalVnd)
+                        }
+                      </td>
+                      <td className="py-2.5">
+                        {isEditing ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 h-6 text-[11px] px-2"
+                              onClick={() => saveItem(item.id)}
+                            >Lưu</Button>
+                            <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2"
+                              onClick={() => setEditingItemId(null)}
+                            ><X className="h-3 w-3" /></Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => openEditItem(item)}
+                              className="p-1 text-gray-300 hover:text-indigo-500"
+                              title="Sửa dòng hàng"
+                            ><Pencil className="h-3 w-3" /></button>
+                            <button
+                              onClick={() => deleteItem(item.id)}
+                              className="p-1 text-gray-300 hover:text-red-500"
+                              title="Xoá dòng hàng"
+                            ><Trash2 className="h-3 w-3" /></button>
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
+
+                {/* Thêm dòng hàng mới inline */}
+                {addingItem && (() => {
+                  const fp = newItem.productSearch.trim()
+                    ? allProducts.filter((p) => {
+                        const q = newItem.productSearch.toLowerCase();
+                        return p.name.toLowerCase().includes(q) || (p.nameVi ?? "").toLowerCase().includes(q);
+                      })
+                    : allProducts;
+                  return (
+                    <tr className="bg-green-50/60">
+                      <td className="py-2 pr-2">
+                        <div className="space-y-1">
+                          <Input
+                            placeholder="🔍 Tìm sản phẩm..."
+                            className="h-7 text-xs"
+                            value={newItem.productSearch}
+                            onChange={(e) => setNewItem((n) => ({ ...n, productSearch: e.target.value }))}
+                            autoFocus
+                          />
+                          <select
+                            className="w-full rounded-md border border-green-300 bg-white px-2 py-1 text-xs"
+                            value={newItem.productId}
+                            onChange={(e) => setNewItem((n) => ({ ...n, productId: e.target.value }))}
+                          >
+                            <option value="">— {fp.length} sản phẩm —</option>
+                            {fp.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nameVi ? `${p.nameVi} — ${p.name.slice(0, 35)}` : p.name} · {p.unit}
+                              </option>
+                            ))}
+                          </select>
+                          <Input
+                            placeholder="Ghi chú..."
+                            className="h-7 text-xs"
+                            value={newItem.notes}
+                            onChange={(e) => setNewItem((n) => ({ ...n, notes: e.target.value }))}
+                          />
+                        </div>
+                      </td>
+                      <td className="py-2 text-right align-top pt-3">
+                        <Input type="number" className="w-20 h-7 text-xs text-right ml-auto" placeholder="SL"
+                          value={newItem.quantity}
+                          onChange={(e) => setNewItem((n) => ({ ...n, quantity: e.target.value }))}
+                        />
+                      </td>
+                      <td />
+                      <td className="py-2 text-right align-top pt-3">
+                        <Input type="number" className="w-28 h-7 text-xs text-right ml-auto" placeholder="Giá (VND)"
+                          value={newItem.priceVnd}
+                          onChange={(e) => setNewItem((n) => ({ ...n, priceVnd: e.target.value }))}
+                        />
+                      </td>
+                      <td className="py-2 text-right align-top pt-3 text-xs font-semibold text-green-700">
+                        {newItem.quantity && newItem.priceVnd
+                          ? formatVND(Number(newItem.quantity) * Number(newItem.priceVnd))
+                          : "—"
+                        }
+                      </td>
+                      <td className="py-2 align-top pt-3">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button size="sm" className="bg-green-600 hover:bg-green-700 h-6 text-[11px] px-2"
+                            onClick={addNewItem}
+                          >Thêm</Button>
+                          <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2"
+                            onClick={() => setAddingItem(false)}
+                          ><X className="h-3 w-3" /></Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })()}
               </tbody>
               <tfoot>
                 <tr className="border-t border-gray-200">
-                  <td colSpan={4} className="pt-3 text-right font-semibold text-gray-700">Tổng giá vốn</td>
+                  <td colSpan={5} className="pt-3 text-right font-semibold text-gray-700">Tổng giá vốn</td>
                   <td className="pt-3 text-right text-lg font-bold text-gray-900">{formatVND(order.totalVnd)}</td>
                 </tr>
                 {order.isBuyOnBehalf && order.sellingPriceVnd && order.sellingPriceVnd !== order.totalVnd && (
                   <tr>
-                    <td colSpan={4} className="pt-1 text-right text-sm text-gray-500">Giá bán lại</td>
+                    <td colSpan={5} className="pt-1 text-right text-sm text-gray-500">Giá bán lại</td>
                     <td className="pt-1 text-right text-sm font-semibold text-blue-600">{formatVND(order.sellingPriceVnd)}</td>
                   </tr>
                 )}

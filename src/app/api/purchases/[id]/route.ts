@@ -114,7 +114,31 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+
+  // Phải xoá theo đúng thứ tự để tránh FK constraint errors
+  // 1. Tìm ProductionOrder liên kết (nếu có)
+  const productionOrder = await prisma.productionOrder.findUnique({
+    where: { purchaseOrderId: id },
+    select: { id: true },
+  });
+
+  if (productionOrder) {
+    // 1a. Xoá ProductionCost + ProductionItem (cascade từ ProductionOrder)
+    await prisma.productionOrder.delete({ where: { id: productionOrder.id } });
+  }
+
+  // 2. Xoá liên kết ShipmentBatchOrder (junction table)
+  await prisma.shipmentBatchOrder.deleteMany({ where: { purchaseOrderId: id } });
+
+  // 3. Set null FundTransaction.purchaseOrderId để không mất sổ quỹ
+  await prisma.fundTransaction.updateMany({
+    where: { purchaseOrderId: id },
+    data: { purchaseOrderId: null },
+  });
+
+  // 4. Xoá PurchaseOrder (cascade xoá PurchaseItem + Payment)
   await prisma.purchaseOrder.delete({ where: { id } });
+
   triggerSheetSync("purchases");
   return new Response(null, { status: 204 });
 }
