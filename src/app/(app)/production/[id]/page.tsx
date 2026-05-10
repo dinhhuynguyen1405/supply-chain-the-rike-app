@@ -477,7 +477,6 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                               if (!q) return true;
                               return p.name.toLowerCase().includes(q) || (p.nameVi || "").toLowerCase().includes(q);
                             })
-                            .slice(0, 150)
                             .map((p) => (
                               <option key={p.id} value={p.id}>
                                 {p.nameVi ? `${p.nameVi} (${p.name.substring(0, 40)})` : p.name} · {p.unit}
