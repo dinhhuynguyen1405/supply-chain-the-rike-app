@@ -1,16 +1,17 @@
 "use client";
-import { useEffect, useState, use, useRef } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Package, Truck, CheckCircle2, Clock, BarChart3, ImageIcon, Upload, ExternalLink, Trash2, Save, Link2 } from "lucide-react";
+import { ArrowLeft, Package, Truck, CheckCircle2, Clock, BarChart3, ImageIcon, ExternalLink, Trash2, Save, Link2, ImageOff } from "lucide-react";
 import type { InventoryProduct } from "@/app/api/inventory/route";
 import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils";
 import Link from "next/link";
 import { toast } from "sonner";
+import { ProductImageGallery } from "@/components/product-image-gallery";
 
 interface PurchaseHistoryItem {
   id: string;
@@ -56,18 +57,12 @@ export default function ProductHistoryPage({
   const [product, setProduct] = useState<Product | null>(null);
   const [history, setHistory] = useState<PurchaseHistoryItem[]>([]);
   const [stock, setStock] = useState<InventoryProduct | null>(null);
-  // Label state
   const [driveUrl, setDriveUrl] = useState("");
-  const [savingDrive, setSavingDrive] = useState(false);
-  const [uploadingLabel, setUploadingLabel] = useState(false);
-  const labelFileRef = useRef<HTMLInputElement>(null);
+  const [savingLabel, setSavingLabel] = useState(false);
 
   const loadProduct = () =>
     fetch(`/api/products/${id}`).then((r) => r.json()).then((p: Product) => {
-      if (p?.id) {
-        setProduct(p);
-        setDriveUrl(p.labelDriveUrl ?? "");
-      }
+      if (p?.id) { setProduct(p); setDriveUrl(p.labelDriveUrl ?? ""); }
     });
 
   useEffect(() => {
@@ -79,32 +74,22 @@ export default function ProductHistoryPage({
     });
   }, [id]);
 
-  async function saveDriveUrl() {
-    setSavingDrive(true);
-    const res = await fetch(`/api/products/${id}`, {
+  async function saveLabel() {
+    setSavingLabel(true);
+    const res = await fetch(`/api/products/${id}/label`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ labelDriveUrl: driveUrl || null }),
+      body: JSON.stringify({ driveUrl: driveUrl.trim() || null }),
     });
-    setSavingDrive(false);
-    if (res.ok) { toast.success("Đã lưu link Drive ✓"); loadProduct(); }
-    else toast.error("Lỗi lưu link");
+    setSavingLabel(false);
+    if (res.ok) { toast.success("Đã lưu label ✓"); loadProduct(); }
+    else toast.error("Lỗi lưu label");
   }
 
-  async function uploadLabelImage(file: File) {
-    setUploadingLabel(true);
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch(`/api/products/${id}/label`, { method: "POST", body: form });
-    setUploadingLabel(false);
-    if (res.ok) { toast.success("Đã tải ảnh label ✓"); loadProduct(); }
-    else { const d = await res.json(); toast.error(d.error ?? "Lỗi upload"); }
-  }
-
-  async function deleteLabelImage() {
+  async function clearLabel() {
     if (!confirm("Xoá ảnh label này?")) return;
     const res = await fetch(`/api/products/${id}/label`, { method: "DELETE" });
-    if (res.ok) { toast.success("Đã xoá ảnh label"); loadProduct(); }
+    if (res.ok) { toast.success("Đã xoá label"); setDriveUrl(""); loadProduct(); }
     else toast.error("Lỗi xoá");
   }
 
@@ -198,121 +183,95 @@ export default function ProductHistoryPage({
 
       {/* Label Card */}
       <Card className="p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <ImageIcon className="h-4 w-4 text-indigo-600" />
-          <h2 className="text-sm font-semibold text-gray-700">Ảnh Label / Nhãn đóng gói</h2>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <ImageIcon className="h-4 w-4 text-indigo-600" />
+            <h2 className="text-sm font-semibold text-gray-700">Ảnh Label / Nhãn đóng gói</h2>
+          </div>
+          {product.labelDriveUrl && (
+            <button onClick={clearLabel} className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1">
+              <Trash2 className="h-3 w-3" /> Xoá
+            </button>
+          )}
         </div>
 
         <div className="grid gap-5 sm:grid-cols-2">
-          {/* Cột trái: ảnh preview */}
-          <div>
-            {product?.labelImageUrl ? (
-              <div className="relative group rounded-xl overflow-hidden border border-gray-200 bg-gray-50">
+          {/* Preview */}
+          <div className="relative group rounded-xl overflow-hidden border border-gray-200 bg-gray-50 h-52 flex items-center justify-center">
+            {product.labelImageUrl ? (
+              <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={product.labelImageUrl}
                   alt={`Label ${product.nameVi ?? product.name}`}
-                  className="w-full h-56 object-contain"
+                  className="w-full h-full object-contain"
+                  onError={(e) => {
+                    (e.currentTarget).style.display = "none";
+                    (e.currentTarget).nextElementSibling?.classList.remove("hidden");
+                  }}
                 />
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                  <a
-                    href={product.labelImageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-full bg-white/90 p-2 hover:bg-white"
-                    title="Xem full size"
-                  >
+                <div className="hidden absolute inset-0 flex flex-col items-center justify-center gap-1 text-gray-300">
+                  <ImageOff className="h-8 w-8" />
+                  <p className="text-xs">Chưa share public trên Drive</p>
+                </div>
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <a href={product.labelDriveUrl ?? product.labelImageUrl} target="_blank" rel="noopener noreferrer"
+                    className="rounded-full bg-white/90 p-2.5 hover:bg-white">
                     <ExternalLink className="h-4 w-4 text-gray-700" />
                   </a>
-                  <button
-                    onClick={deleteLabelImage}
-                    className="rounded-full bg-red-500/90 p-2 hover:bg-red-600"
-                    title="Xoá ảnh"
-                  >
-                    <Trash2 className="h-4 w-4 text-white" />
-                  </button>
                 </div>
-              </div>
+              </>
             ) : (
-              <div
-                className="flex h-56 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors"
-                onClick={() => labelFileRef.current?.click()}
-              >
-                <Upload className="h-8 w-8 text-gray-300" />
-                <p className="text-sm text-gray-400">Click để tải ảnh label lên</p>
-                <p className="text-xs text-gray-300">JPG, PNG, WebP — tối đa 5MB</p>
+              <div className="flex flex-col items-center gap-2 text-gray-300">
+                <ImageOff className="h-10 w-10" />
+                <p className="text-xs text-gray-400">Chưa có ảnh label</p>
               </div>
             )}
-
-            {/* Upload button */}
-            <input
-              ref={labelFileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) uploadLabelImage(f);
-                e.target.value = "";
-              }}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              className="mt-2 w-full text-xs border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-              disabled={uploadingLabel}
-              onClick={() => labelFileRef.current?.click()}
-            >
-              <Upload className="mr-1.5 h-3.5 w-3.5" />
-              {uploadingLabel ? "Đang tải..." : product?.labelImageUrl ? "Thay ảnh mới" : "Tải ảnh label lên"}
-            </Button>
           </div>
 
-          {/* Cột phải: link Drive + info */}
-          <div className="space-y-4">
+          {/* Input Drive URL */}
+          <div className="space-y-3 flex flex-col justify-center">
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
-                <Link2 className="h-3 w-3" /> Link Google Drive (file gốc)
+                <Link2 className="h-3 w-3" /> Link Google Drive
               </Label>
               <Input
-                placeholder="https://drive.google.com/open?id=..."
+                placeholder="https://drive.google.com/file/d/..."
                 value={driveUrl}
                 onChange={(e) => setDriveUrl(e.target.value)}
                 className="text-xs font-mono"
               />
-              <Button
-                size="sm"
-                onClick={saveDriveUrl}
-                disabled={savingDrive}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-xs"
-              >
-                <Save className="mr-1.5 h-3.5 w-3.5" />
-                {savingDrive ? "Đang lưu..." : "Lưu link Drive"}
-              </Button>
+              <p className="text-[11px] text-gray-400">
+                File phải được share <strong>&ldquo;Anyone with the link&rdquo;</strong> mới hiển thị được
+              </p>
             </div>
-
-            {/* Quick open Drive link */}
-            {product?.labelDriveUrl && (
-              <a
-                href={product.labelDriveUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-700 hover:bg-indigo-100 transition-colors"
-              >
+            <Button
+              size="sm"
+              onClick={saveLabel}
+              disabled={savingLabel}
+              className="w-full bg-indigo-600 hover:bg-indigo-700"
+            >
+              <Save className="mr-1.5 h-3.5 w-3.5" />
+              {savingLabel ? "Đang lưu..." : "Lưu label"}
+            </Button>
+            {product.labelDriveUrl && (
+              <a href={product.labelDriveUrl} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-700 hover:bg-indigo-100 transition-colors">
                 <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">Mở file gốc trên Google Drive</span>
               </a>
             )}
-
-            <div className="rounded-lg bg-gray-50 border border-gray-100 p-3 text-xs text-gray-500 space-y-1">
-              <p className="font-medium text-gray-600">💡 Hướng dẫn:</p>
-              <p>• <strong>Tải ảnh lên</strong>: lưu trực tiếp vào app, hiển thị trong trang sản xuất</p>
-              <p>• <strong>Link Drive</strong>: lưu link file gốc Illustrator/PDF để chỉnh sửa</p>
-              <p>• Có thể dùng cả hai cùng lúc</p>
-            </div>
           </div>
         </div>
       </Card>
+
+      {/* Listing images gallery */}
+      <ProductImageGallery
+        productId={id}
+        type="listing"
+        label="Ảnh Listing (Shopify / Amazon)"
+        maxImages={12}
+      />
 
       {/* Purchase history timeline */}
       <div>

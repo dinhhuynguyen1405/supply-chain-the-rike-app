@@ -3,13 +3,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, ShoppingCart, TrendingUp, Package,
-  Users, Link2, RefreshCw, Boxes, ShoppingBag, Truck,
+  Users, Link2, Boxes, ShoppingBag, Truck,
   ClipboardList, Wallet, Search, Settings, Factory,
-  ChevronRight, Bot, BarChart3, GitCompareArrows,
+  ChevronRight, BarChart3, GitCompareArrows, Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
-import { toast } from "sonner";
 
 const PIPELINE_STEPS: { href: string; icon: React.ElementType; label: string; step: number | null }[] = [
   { href: "/orders",     icon: ShoppingBag,  label: "Đơn Shopify",         step: null },
@@ -28,15 +26,15 @@ const WAREHOUSE_ITEMS: { href: string; icon: React.ElementType; label: string }[
 ];
 
 const FINANCE_ITEMS: { href: string; icon: React.ElementType; label: string }[] = [
-  { href: "/sales",   icon: TrendingUp, label: "Bán hàng" },
-  { href: "/fund",    icon: Wallet,     label: "Sổ quỹ" },
-  { href: "/restock", icon: BarChart3,  label: "Phân tích mua thêm" },
+  { href: "/sales",     icon: TrendingUp,  label: "Bán hàng" },
+  { href: "/fund",      icon: Wallet,      label: "Sổ quỹ" },
+  { href: "/bros-fees", icon: Building2,   label: "Phí kho Bros" },
+  { href: "/restock",   icon: BarChart3,   label: "Phân tích mua thêm" },
 ];
 
 const TOOLS_ITEMS: { href: string; icon: React.ElementType; label: string }[] = [
-  { href: "/agent",   icon: Bot,   label: "Agent / Đồng bộ" },
-  { href: "/links",   icon: Link2, label: "Liên kết" },
-  { href: "/settings",icon: Settings, label: "Cài đặt API" },
+  { href: "/links",   icon: Link2,    label: "Liên kết" },
+  { href: "/settings",icon: Settings, label: "Cài đặt" },
 ];
 
 function NavItem({
@@ -80,29 +78,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [syncing, setSyncing] = useState(false);
-  const [lastSync, setLastSync] = useState<string | null>(null);
-
-  async function syncSheets() {
-    setSyncing(true);
-    try {
-      const res = await fetch("/api/sync/sheets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: "all" }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        const now = new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-        setLastSync(now);
-        toast.success(`Đã sync ${data.synced?.length ?? 0} tabs lên Google Sheets`);
-      } else {
-        toast.error(data.error ?? "Lỗi sync");
-      }
-    } finally {
-      setSyncing(false);
-    }
-  }
 
   function isActive(href: string) {
     return pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
@@ -176,24 +151,8 @@ export function Sidebar() {
         </div>
       </nav>
 
-      {/* Sync button */}
-      <div className="border-t border-gray-200 p-3 space-y-1">
-        <button
-          onClick={syncSheets}
-          disabled={syncing}
-          className={cn(
-            "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold transition-all",
-            syncing
-              ? "bg-green-50 text-green-600 cursor-wait"
-              : "text-gray-600 hover:bg-green-50 hover:text-green-700 border border-transparent hover:border-green-200"
-          )}
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5 shrink-0", syncing && "animate-spin")} />
-          <span className="flex-1 text-left">{syncing ? "Đang sync..." : "Sync Google Sheets"}</span>
-          {lastSync && !syncing && (
-            <span className="text-[10px] text-gray-400 shrink-0">{lastSync}</span>
-          )}
-        </button>
+      {/* Footer */}
+      <div className="border-t border-gray-200 p-3">
         <p className="px-3 text-[10px] text-gray-400">VN → US Supply Chain</p>
       </div>
     </aside>

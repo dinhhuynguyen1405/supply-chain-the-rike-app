@@ -48,8 +48,15 @@ dev.db-journal
 bros-mapping-analysis.csv
 *.csv
 
+# SQLite export (có chứa toàn bộ data — không commit)
+scripts/sqlite-export.json
+
 # agent custom instructions
 .claude/
 
-# Temporary data scripts
-scripts/
+# Ảnh upload cũ (không còn dùng — giờ dùng Google Drive link)
+# Giữ lại để ignore nếu có file cũ còn sót
+/public/labels/*
+!/public/labels/.gitkeep
+/public/products/**/*
+!/public/products/.gitkeep

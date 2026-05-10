@@ -79,6 +79,48 @@ export function generateProductionCode(): string {
 }
 
 /**
+ * Chuyển Google Drive share URL → embed URL dùng được trong <img src>.
+ *
+ * Share URL:  https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+ * Embed URL:  https://drive.google.com/thumbnail?id=FILE_ID&sz=w1200
+ *
+ * Lưu ý: file phải được share "Anyone with the link" mới hiển thị được.
+ */
+export function driveUrlToEmbed(url: string, size = "w1200"): string {
+  if (!url || !url.trim()) return url;
+
+  // Đã là embed URL rồi
+  if (url.includes("thumbnail?id=") || url.includes("uc?export=view")) return url;
+
+  // Format: /file/d/{id}/view  hoặc  /file/d/{id}/edit
+  const fileMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) {
+    return `https://drive.google.com/thumbnail?id=${fileMatch[1]}&sz=${size}`;
+  }
+
+  // Format: ?id={id}  hoặc  &id={id}
+  const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch) {
+    return `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=${size}`;
+  }
+
+  // Không nhận ra → trả về nguyên
+  return url;
+}
+
+/**
+ * Trích xuất Drive file ID từ share URL. Trả về null nếu không phải Drive link.
+ */
+export function driveFileId(url: string): string | null {
+  if (!url) return null;
+  const fileMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return fileMatch[1];
+  const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch) return idMatch[1];
+  return null;
+}
+
+/**
  * Chuyển đổi số lượng nguyên liệu → số gói bán (selling units).
  * Dùng chung cho dashboard, inventory, shipments, sheets sync.
  *

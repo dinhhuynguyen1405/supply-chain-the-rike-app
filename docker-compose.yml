@@ -1,0 +1,30 @@
+version: "3.9"
+
+# ── PostgreSQL cho The Rike App ───────────────────────────────────────────────
+# Chạy: docker compose up -d
+# Dừng: docker compose down  (data vẫn giữ trong volume)
+# Xoá hẳn: docker compose down -v  (⚠ mất data)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rike-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rike
+      POSTGRES_PASSWORD: rike_local_2024
+      POSTGRES_DB: rike_db
+    ports:
+      - "5433:5432"   # Host port 5433 → container port 5432 (tránh conflict với PG native)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/pg-init:/docker-entrypoint-initdb.d  # SQL init scripts nếu cần
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rike -d rike_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    name: rike-postgres-data  # Volume tên rõ ràng, dễ backup

@@ -4,7 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 model Supplier {
@@ -73,6 +73,28 @@ model Product {
   fulfillmentItems FulfillmentItem[]
   researchItems    PurchaseResearch[]
   productionItems  ProductionItem[]
+  productImages    ProductImage[]
+}
+
+// ── Ảnh sản phẩm (listing + thumbnail) ─────────────────────────────────────────
+// Khác với labelImageUrl (ảnh nhãn đóng gói) — đây là ảnh marketing/listing
+// VD: ảnh chụp sản phẩm, infographic, ảnh so sánh...
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  url       String   // Relative path: /products/{productId}/{filename}
+  type      String   @default("listing")
+  // "listing"   = ảnh listing Shopify/Amazon (tối đa 10)
+  // "thumbnail" = ảnh đại diện nhỏ (dùng trong app)
+
+  altText   String?  // Alt text / mô tả ảnh
+  sortOrder Int      @default(0)   // Thứ tự hiển thị (0 = ảnh đầu tiên)
+  driveUrl  String?  // Google Drive link gốc (nếu có)
+  sizeBytes Int?     // Kích thước file
+
+  createdAt DateTime @default(now())
 }
 
 model PurchaseOrder {
