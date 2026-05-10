@@ -22,6 +22,8 @@ interface Product {
   piecesPerUnit: number | null;
   piecesPerPack: number | null;
   skuShopify: string | null;
+  skuAmz: string | null;
+  skuBros: string | null;
   labelImageUrl: string | null;
   labelDriveUrl: string | null;
 }
@@ -35,6 +37,7 @@ interface PurchaseItem {
 
 interface ProductionItem {
   id: string;
+  productId: string;
   product: Product;
   purchaseItem: PurchaseItem;
   plannedQty: number;
@@ -121,6 +124,7 @@ const COST_TYPE_COLORS: Record<string, string> = {
 };
 
 interface ItemState {
+  productId?:   string;
   actualQty:    string;
   wasteNote:    string;
   gramsPerPack: string;
@@ -146,11 +150,13 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
   const router = useRouter();
 
   const [order, setOrder] = useState<ProductionOrder | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [itemStates, setItemStates] = useState<Record<string, ItemState>>({});
   const [notes, setNotes] = useState("");
+  const [productSearch, setProductSearch] = useState<Record<string, string>>({});
 
   // Cost form
   const [showAddCost, setShowAddCost] = useState(false);
@@ -170,6 +176,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
     const init: Record<string, ItemState> = {};
     for (const item of data.items) {
       init[item.id] = {
+        productId:    item.productId,
         actualQty:    item.actualQty != null ? String(item.actualQty) : "",
         wasteNote:    item.wasteNote ?? "",
         gramsPerPack: item.gramsPerPack != null ? String(item.gramsPerPack) : "",
@@ -181,7 +188,12 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    load();
+    fetch("/api/products?limit=5000")
+      .then(res => res.json())
+      .then(data => setProducts(Array.isArray(data) ? data : (data.products || [])));
+  }, [id]);
 
   function setField(itemId: string, field: keyof ItemState, value: string) {
     setItemStates((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [field]: value } }));
@@ -212,6 +224,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
       );
       return {
         id: item.id,
+        productId:    s?.productId ?? item.productId,
         actualQty:    s?.actualQty !== "" ? Number(s?.actualQty) : null,
         wasteNote:    s?.wasteNote || null,
         gramsPerPack: s?.gramsPerPack  ? Number(s.gramsPerPack)  : null,
@@ -442,11 +455,36 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="font-semibold text-gray-800">
-                          {item.product.nameVi ?? item.product.name}
-                        </div>
-                        <div className="text-xs text-gray-400 mt-0.5">
+                      <div className="flex-1 space-y-1">
+                        <Input
+                          placeholder="🔍 Tìm sản phẩm để đổi..."
+                          className="text-xs h-7 bg-white w-full max-w-[250px]"
+                          value={productSearch[item.id] || ""}
+                          onChange={(e) => setProductSearch((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                        />
+                        <select
+                          className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                          value={s.productId ?? item.product.id}
+                          onChange={(e) => setField(item.id, "productId", e.target.value)}
+                        >
+                          <option value={item.product.id}>
+                            {item.product.nameVi ? `${item.product.nameVi} (${item.product.name.substring(0, 40)})` : item.product.name}
+                          </option>
+                          {products
+                            .filter((p) => {
+                              if (p.id === item.product.id) return false;
+                              const q = (productSearch[item.id] || "").toLowerCase();
+                              if (!q) return true;
+                              return p.name.toLowerCase().includes(q) || (p.nameVi || "").toLowerCase().includes(q);
+                            })
+                            .slice(0, 150)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nameVi ? `${p.nameVi} (${p.name.substring(0, 40)})` : p.name} · {p.unit}
+                              </option>
+                            ))}
+                        </select>
+                        <div className="text-xs text-gray-400 mt-0.5 mt-1">
                           {item.product.name}
                           {item.product.skuShopify && ` · ${item.product.skuShopify}`}
                         </div>
@@ -586,7 +624,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                     <Input
                       type="number" min={0}
                       placeholder={planned != null ? String(planned) : "Nhập..."}
-                      value={s.actualQty} disabled={isDone}
+                      value={s.actualQty}
                       onChange={(e) => setField(item.id, "actualQty", e.target.value)}
                       className="mt-1 h-9"
                     />
@@ -595,7 +633,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                     <Label className="text-xs text-gray-500">Ghi chú hao hụt</Label>
                     <Input
                       type="text" placeholder="VD: Vỡ túi, đo sai..."
-                      value={s.wasteNote} disabled={isDone}
+                      value={s.wasteNote}
                       onChange={(e) => setField(item.id, "wasteNote", e.target.value)}
                       className="mt-1 h-9"
                     />
@@ -874,7 +912,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
         <Label className="text-xs text-gray-500 font-semibold">Ghi chú lô sản xuất</Label>
         <Input
           type="text" placeholder="Ghi chú thêm..."
-          value={notes} disabled={isDone}
+          value={notes}
           onChange={(e) => setNotes(e.target.value)}
           className="mt-2 h-9"
         />
@@ -928,41 +966,47 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
       )}
 
       {/* Action buttons */}
-      {!isDone && (
-        <div className="flex items-center gap-3 pt-2 flex-wrap">
-          {order.status === "pending" && (
-            <Button onClick={handleStart} disabled={saving} variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-50">
-              Bắt đầu sản xuất
-            </Button>
-          )}
-          {order.status === "in_production" && (
-            <>
-              <Button onClick={handleSave} disabled={saving} variant="outline">
-                {saving ? "Đang lưu..." : "Lưu tạm"}
+      <div className="flex items-center gap-3 pt-2 flex-wrap">
+        {!isDone ? (
+          <>
+            {order.status === "pending" && (
+              <Button onClick={handleStart} disabled={saving} variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-50">
+                Bắt đầu sản xuất
               </Button>
-              <Button
-                onClick={handleComplete}
-                disabled={saving || !allConfirmed}
-                className="bg-green-600 hover:bg-green-700 text-white"
-              >
-                {saving ? "Đang lưu..." : "Xác nhận hoàn tất"}
-              </Button>
-              {!allConfirmed && (
-                <span className="text-xs text-gray-400">
-                  Còn {order.items.length - confirmedCount} mục chưa nhập thực tế
-                </span>
-              )}
-            </>
-          )}
-          <Button
-            onClick={handleDelete}
-            variant="outline" disabled={saving}
-            className="ml-auto text-red-500 border-red-200 hover:bg-red-50"
-          >
-            Xóa lệnh
+            )}
+            {order.status === "in_production" && (
+              <>
+                <Button onClick={handleSave} disabled={saving} variant="outline">
+                  {saving ? "Đang lưu..." : "Lưu tạm"}
+                </Button>
+                <Button
+                  onClick={handleComplete}
+                  disabled={saving || !allConfirmed}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {saving ? "Đang lưu..." : "Xác nhận hoàn tất"}
+                </Button>
+                {!allConfirmed && (
+                  <span className="text-xs text-gray-400">
+                    Còn {order.items.length - confirmedCount} mục chưa nhập thực tế
+                  </span>
+                )}
+              </>
+            )}
+          </>
+        ) : (
+          <Button onClick={handleSave} disabled={saving} variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+            {saving ? "Đang cập nhật..." : "Lưu điều chỉnh"}
           </Button>
-        </div>
-      )}
+        )}
+        <Button
+          onClick={handleDelete}
+          variant="outline" disabled={saving}
+          className="ml-auto text-red-500 border-red-200 hover:bg-red-50"
+        >
+          Xóa lệnh
+        </Button>
+      </div>
     </div>
   );
 }
