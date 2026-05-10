@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { formatDate, formatVND } from "@/lib/utils";
 import {
   Factory, ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck,
-  Trash2, Plus, Pencil, X, DollarSign,
+  Trash2, Plus, Pencil, X, DollarSign, ImageIcon, ExternalLink,
 } from "lucide-react";
 
 interface Product {
@@ -22,6 +22,8 @@ interface Product {
   piecesPerUnit: number | null;
   piecesPerPack: number | null;
   skuShopify: string | null;
+  labelImageUrl: string | null;
+  labelDriveUrl: string | null;
 }
 
 interface PurchaseItem {
@@ -411,17 +413,80 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
             return (
               <div key={item.id} className="border border-gray-100 rounded-lg p-4 space-y-4">
                 {/* Product header */}
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="font-semibold text-gray-800">
-                      {item.product.nameVi ?? item.product.name}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      {item.product.name}
-                      {item.product.skuShopify && ` · ${item.product.skuShopify}`}
+                <div className="flex items-start gap-3">
+                  {/* Label thumbnail */}
+                  {item.product.labelImageUrl ? (
+                    <a
+                      href={item.product.labelDriveUrl ?? item.product.labelImageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Xem label đầy đủ"
+                      className="shrink-0"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={item.product.labelImageUrl}
+                        alt="label"
+                        className="h-16 w-16 rounded-lg object-cover border border-gray-200 hover:border-indigo-400 transition-colors shadow-sm"
+                      />
+                    </a>
+                  ) : (
+                    <a
+                      href={`/products/${item.product.id}`}
+                      title="Thêm label ảnh"
+                      className="shrink-0 flex h-16 w-16 items-center justify-center rounded-lg border-2 border-dashed border-gray-200 bg-gray-50 hover:border-indigo-300 hover:bg-indigo-50 transition-colors"
+                    >
+                      <ImageIcon className="h-5 w-5 text-gray-300" />
+                    </a>
+                  )}
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-semibold text-gray-800">
+                          {item.product.nameVi ?? item.product.name}
+                        </div>
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {item.product.name}
+                          {item.product.skuShopify && ` · ${item.product.skuShopify}`}
+                        </div>
+                        {/* Label links */}
+                        <div className="mt-1 flex items-center gap-2">
+                          {item.product.labelImageUrl && (
+                            <a
+                              href={item.product.labelImageUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-indigo-500 hover:underline flex items-center gap-0.5"
+                            >
+                              <ExternalLink className="h-2.5 w-2.5" />
+                              Xem ảnh label
+                            </a>
+                          )}
+                          {item.product.labelDriveUrl && (
+                            <a
+                              href={item.product.labelDriveUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-blue-500 hover:underline flex items-center gap-0.5"
+                            >
+                              <ExternalLink className="h-2.5 w-2.5" />
+                              File gốc Drive
+                            </a>
+                          )}
+                          {!item.product.labelImageUrl && !item.product.labelDriveUrl && (
+                            <a
+                              href={`/products/${item.product.id}`}
+                              className="text-[11px] text-gray-400 hover:text-indigo-500 hover:underline"
+                            >
+                              + Thêm label ảnh
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                      {actual != null && <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />}
                     </div>
                   </div>
-                  {actual != null && <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />}
                 </div>
 
                 {/* Packing config */}

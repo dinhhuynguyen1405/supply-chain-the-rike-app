@@ -35,6 +35,8 @@ export async function PUT(
   if ("restockThreshold" in body) data.restockThreshold = body.restockThreshold != null ? Number(body.restockThreshold) : 10;
   if ("category" in body) data.category = body.category || null;
   if ("notes" in body) data.notes = body.notes || null;
+  if ("labelImageUrl" in body) data.labelImageUrl = body.labelImageUrl || null;
+  if ("labelDriveUrl" in body) data.labelDriveUrl = body.labelDriveUrl || null;
 
   const product = await prisma.product.update({ where: { id }, data });
   triggerSheetSync("products");
