@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, TrendingUp, Package,
   Users, Link2, RefreshCw, Boxes, ShoppingBag, Truck,
   ClipboardList, Wallet, Search, Settings, Factory,
-  ChevronRight, Bot, BarChart3,
+  ChevronRight, Bot, BarChart3, GitCompareArrows,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -20,10 +20,11 @@ const PIPELINE_STEPS: { href: string; icon: React.ElementType; label: string; st
 ];
 
 const WAREHOUSE_ITEMS: { href: string; icon: React.ElementType; label: string }[] = [
-  { href: "/inventory",   icon: Boxes,         label: "Tồn kho" },
-  { href: "/fulfillment", icon: ClipboardList, label: "Lệnh đóng hàng" },
-  { href: "/products",    icon: Package,       label: "Sản phẩm" },
-  { href: "/suppliers",   icon: Users,         label: "Nhà cung cấp" },
+  { href: "/inventory",      icon: Boxes,               label: "Tồn kho" },
+  { href: "/reconciliation", icon: GitCompareArrows,    label: "So khớp tồn kho" },
+  { href: "/fulfillment",    icon: ClipboardList,       label: "Lệnh đóng hàng" },
+  { href: "/products",       icon: Package,             label: "Sản phẩm" },
+  { href: "/suppliers",      icon: Users,               label: "Nhà cung cấp" },
 ];
 
 const FINANCE_ITEMS: { href: string; icon: React.ElementType; label: string }[] = [
