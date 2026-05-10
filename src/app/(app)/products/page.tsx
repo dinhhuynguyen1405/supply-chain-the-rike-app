@@ -190,6 +190,19 @@ export default function ProductsPage() {
     setTimeout(() => inlineRef.current?.focus(), 50);
   }
 
+  async function deleteProduct(p: Product) {
+    if (!confirm(`Xoá sản phẩm "${p.nameVi ?? p.name}"?\nThao tác này không thể hoàn tác.`)) return;
+    const res = await fetch(`/api/products/${p.id}`, { method: "DELETE" });
+    if (res.ok) {
+      toast.success(`Đã xoá "${p.nameVi ?? p.name}"`);
+      load();
+    } else {
+      // Thường thất bại vì còn dữ liệu liên quan (đơn mua, sản xuất...)
+      const data = await res.json().catch(() => ({}));
+      toast.error(data?.error ?? "Không thể xoá — sản phẩm này có dữ liệu liên quan (đơn mua, lệnh sản xuất...)");
+    }
+  }
+
   async function saveInlineVi(productId: string) {
     const val = inlineVal.trim();
     const res = await fetch(`/api/products/${productId}`, {
@@ -419,8 +432,16 @@ export default function ProductsPage() {
                         <ExternalLink className="h-3.5 w-3.5" />
                       </a>
                     )}
-                    <Button size="icon" variant="ghost" onClick={() => openEdit(p)}>
+                    <Button size="icon" variant="ghost" onClick={() => openEdit(p)} title="Sửa sản phẩm">
                       <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="icon" variant="ghost"
+                      className="text-red-400 hover:text-red-600 hover:bg-red-50"
+                      onClick={() => deleteProduct(p)}
+                      title="Xoá sản phẩm"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 </td>

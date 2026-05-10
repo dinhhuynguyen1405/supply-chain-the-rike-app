@@ -48,7 +48,19 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  await prisma.product.delete({ where: { id } });
-  triggerSheetSync("products");
-  return new Response(null, { status: 204 });
+  try {
+    await prisma.product.delete({ where: { id } });
+    triggerSheetSync("products");
+    return new Response(null, { status: 204 });
+  } catch (err: unknown) {
+    // FK constraint — sản phẩm có dữ liệu liên quan
+    const msg = err instanceof Error ? err.message : "";
+    if (msg.includes("Foreign key") || msg.includes("constraint")) {
+      return Response.json(
+        { error: "Sản phẩm này có dữ liệu liên quan (đơn mua, lệnh sản xuất...). Xoá dữ liệu liên quan trước." },
+        { status: 409 }
+      );
+    }
+    return Response.json({ error: "Lỗi xoá sản phẩm" }, { status: 500 });
+  }
 }
