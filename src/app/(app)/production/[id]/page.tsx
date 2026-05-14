@@ -29,10 +29,12 @@ interface Product {
 }
 
 interface PurchaseItem {
+  id: string;
   quantity: number;
   priceVnd: number;
   subtotalVnd: number;
   notes: string | null;
+  group: { id: string; name: string; costUnit: string } | null;
 }
 
 interface ProductionItem {
@@ -42,6 +44,7 @@ interface ProductionItem {
   purchaseItem: PurchaseItem;
   plannedQty: number;
   actualQty: number | null;
+  allocatedQty: number | null;
   wasteNote: string | null;
   gramsPerPack: number | null;
   piecesPerUnit: number | null;
@@ -66,9 +69,12 @@ interface ProductionOrder {
   createdAt: string;
   notes: string | null;
   purchaseOrder: {
+    id: string;
     code: string;
     arrivedDate: string | null;
     supplier: { name: string };
+    /** All purchase items of the linked purchase order (used for SKU allocation form) */
+    items: PurchaseItem[];
   };
   items: ProductionItem[];
   costs: ProductionCost[];
@@ -90,6 +96,21 @@ function calcPlanned(
     if (unit === "kg") return Math.floor((quantity * 1000) / gpp);
     if (unit === "g")  return Math.floor(quantity / gpp);
   }
+  return null;
+}
+
+/** Tính số gói từ allocatedQty (kg) và cấu hình đóng gói */
+function calcPlannedFromAllocated(
+  allocatedKg: number,
+  gramsPerPack: string,
+  piecesPerUnit: string,
+  piecesPerPack: string,
+): number | null {
+  const gpp = Number(gramsPerPack);
+  const ppu = Number(piecesPerUnit);
+  const ppp = Number(piecesPerPack);
+  if (ppu > 0 && ppp > 0) return Math.floor((allocatedKg * ppu) / ppp);
+  if (gpp > 0) return Math.floor((allocatedKg * 1000) / gpp);
   return null;
 }
 
@@ -124,12 +145,13 @@ const COST_TYPE_COLORS: Record<string, string> = {
 };
 
 interface ItemState {
-  productId?:   string;
-  actualQty:    string;
-  wasteNote:    string;
-  gramsPerPack: string;
+  productId?:    string;
+  actualQty:     string;
+  wasteNote:     string;
+  gramsPerPack:  string;
   piecesPerUnit: string;
   piecesPerPack: string;
+  allocatedQty:  string;
 }
 
 interface NewCostState {
@@ -143,6 +165,16 @@ interface EditCostState {
   description: string;
   amountVnd: string;
   note: string;
+}
+
+interface AddItemState {
+  productId: string;
+  productSearch: string;
+  purchaseItemId: string;
+  allocatedQty: string;
+  gramsPerPack: string;
+  piecesPerUnit: string;
+  piecesPerPack: string;
 }
 
 export default function ProductionDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -167,6 +199,13 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
   const [editCost, setEditCost] = useState<EditCostState>({ description: "", amountVnd: "", note: "" });
   const [costSaving, setCostSaving] = useState(false);
 
+  // Add item form (for group-based purchase items)
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [addItemState, setAddItemState] = useState<AddItemState>({
+    productId: "", productSearch: "", purchaseItemId: "",
+    allocatedQty: "", gramsPerPack: "", piecesPerUnit: "", piecesPerPack: "",
+  });
+
   async function load() {
     const res = await fetch(`/api/production/${id}`);
     if (!res.ok) { toast.error("Không tìm thấy lệnh sản xuất"); return; }
@@ -182,6 +221,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
         gramsPerPack: item.gramsPerPack != null ? String(item.gramsPerPack) : "",
         piecesPerUnit: item.piecesPerUnit != null ? String(item.piecesPerUnit) : "",
         piecesPerPack: item.piecesPerPack != null ? String(item.piecesPerPack) : "",
+        allocatedQty:  item.allocatedQty != null ? String(item.allocatedQty) : "",
       };
     }
     setItemStates(init);
@@ -215,13 +255,14 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
     if (!order) return [];
     return order.items.map((item) => {
       const s = itemStates[item.id];
-      const planned = calcPlanned(
-        item.purchaseItem.quantity,
-        item.product.unit,
-        s?.gramsPerPack ?? "",
-        s?.piecesPerUnit ?? "",
-        s?.piecesPerPack ?? "",
-      );
+      // If allocatedQty is set, use it for planning; else use purchaseItem.quantity
+      const baseQty = s?.allocatedQty ? Number(s.allocatedQty) : item.purchaseItem.quantity;
+      const baseUnit = s?.allocatedQty ? "kg" : item.product.unit;
+
+      const planned = s?.allocatedQty
+        ? calcPlannedFromAllocated(Number(s.allocatedQty), s?.gramsPerPack ?? "", s?.piecesPerUnit ?? "", s?.piecesPerPack ?? "")
+        : calcPlanned(baseQty, baseUnit, s?.gramsPerPack ?? "", s?.piecesPerUnit ?? "", s?.piecesPerPack ?? "");
+
       return {
         id: item.id,
         productId:    s?.productId ?? item.productId,
@@ -231,6 +272,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
         piecesPerUnit: s?.piecesPerUnit ? Number(s.piecesPerUnit) : null,
         piecesPerPack: s?.piecesPerPack ? Number(s.piecesPerPack) : null,
         plannedQty:   planned ?? item.plannedQty,
+        allocatedQty: s?.allocatedQty ? Number(s.allocatedQty) : null,
       };
     });
   }
@@ -255,6 +297,62 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
     const res = await fetch(`/api/production/${id}`, { method: "DELETE" });
     if (res.ok) { toast.success("Đã xóa"); router.push("/production"); }
     else toast.error("Lỗi xóa");
+  }
+
+  async function handleDeleteItem(itemId: string) {
+    if (!confirm("Xóa mục này khỏi lệnh sản xuất?")) return;
+    const res = await fetch(`/api/production/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deleteItemId: itemId }),
+    });
+    if (res.ok) {
+      const data: ProductionOrder = await res.json();
+      setOrder(data);
+      toast.success("Đã xóa mục");
+    } else {
+      toast.error("Lỗi xóa");
+    }
+  }
+
+  async function handleAddItem() {
+    if (!addItemState.productId) return toast.error("Chọn sản phẩm");
+    if (!addItemState.purchaseItemId) return toast.error("Chọn dòng nguyên liệu");
+    const selectedProduct = products.find((p) => p.id === addItemState.productId);
+    const allocatedKg = addItemState.allocatedQty ? Number(addItemState.allocatedQty) : null;
+    const gpp = addItemState.gramsPerPack ? Number(addItemState.gramsPerPack) : selectedProduct?.gramsPerUnit ?? null;
+    const ppu = addItemState.piecesPerUnit ? Number(addItemState.piecesPerUnit) : selectedProduct?.piecesPerUnit ?? null;
+    const ppp = addItemState.piecesPerPack ? Number(addItemState.piecesPerPack) : selectedProduct?.piecesPerPack ?? null;
+
+    let planned = 0;
+    if (allocatedKg && gpp) planned = Math.floor((allocatedKg * 1000) / gpp);
+    else if (allocatedKg && ppu && ppp) planned = Math.floor((allocatedKg * ppu) / ppp);
+
+    const res = await fetch(`/api/production/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        addItem: {
+          productId: addItemState.productId,
+          purchaseItemId: addItemState.purchaseItemId,
+          allocatedQty: allocatedKg,
+          gramsPerPack: gpp,
+          piecesPerUnit: ppu,
+          piecesPerPack: ppp,
+          plannedQty: planned,
+        },
+      }),
+    });
+    if (res.ok) {
+      const data: ProductionOrder = await res.json();
+      setOrder(data);
+      setShowAddItem(false);
+      setAddItemState({ productId: "", productSearch: "", purchaseItemId: "", allocatedQty: "", gramsPerPack: "", piecesPerUnit: "", piecesPerPack: "" });
+      toast.success("Đã thêm mã SKU");
+      load();
+    } else {
+      toast.error("Lỗi thêm mục");
+    }
   }
 
   async function handleAddCost() {
@@ -336,13 +434,12 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
 
   const totals = order.items.map((item) => {
     const s = itemStates[item.id];
-    const planned = calcPlanned(
-      item.purchaseItem.quantity,
-      item.product.unit,
-      s?.gramsPerPack ?? "",
-      s?.piecesPerUnit ?? "",
-      s?.piecesPerPack ?? "",
-    ) ?? item.plannedQty;
+    // If allocatedQty set, use it for calc
+    const baseQty = s?.allocatedQty ? Number(s.allocatedQty) : item.purchaseItem.quantity;
+    const rawPlanned = s?.allocatedQty
+      ? calcPlannedFromAllocated(Number(s.allocatedQty), s?.gramsPerPack ?? "", s?.piecesPerUnit ?? "", s?.piecesPerPack ?? "")
+      : calcPlanned(baseQty, item.product.unit, s?.gramsPerPack ?? "", s?.piecesPerUnit ?? "", s?.piecesPerPack ?? "");
+    const planned = rawPlanned ?? item.plannedQty;
     const actual = s?.actualQty !== "" ? Number(s?.actualQty) : null;
     return { planned, actual };
   });
@@ -355,6 +452,17 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
   // Cost calculations
   const totalCost    = (order.costs ?? []).reduce((s, c) => s + c.amountVnd, 0);
   const costPerUnit  = totalActual > 0 ? Math.round(totalCost / totalActual) : null;
+
+  // For add item form: get purchase items that are group-based
+  const purchaseItemsForAdd = order.purchaseOrder.items ?? [];
+
+  // Filtered products for add item form
+  const addItemFilteredProducts = addItemState.productSearch.trim().length >= 2
+    ? products.filter((p) => {
+        const q = addItemState.productSearch.toLowerCase();
+        return p.name.toLowerCase().includes(q) || (p.nameVi ?? "").toLowerCase().includes(q);
+      })
+    : products.slice(0, 50);
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -410,18 +518,20 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
         <div className="space-y-6">
           {order.items.map((item) => {
             const s = itemStates[item.id] ?? {
-              actualQty: "", wasteNote: "", gramsPerPack: "", piecesPerUnit: "", piecesPerPack: "",
+              actualQty: "", wasteNote: "", gramsPerPack: "", piecesPerUnit: "", piecesPerPack: "", allocatedQty: "",
             };
-            const planned = calcPlanned(
-              item.purchaseItem.quantity,
-              item.product.unit,
-              s.gramsPerPack,
-              s.piecesPerUnit,
-              s.piecesPerPack,
-            );
+            const allocatedKg = s.allocatedQty ? Number(s.allocatedQty) : null;
+            const baseQty = allocatedKg ?? item.purchaseItem.quantity;
+            const baseUnit = allocatedKg ? "kg" : item.product.unit;
+
+            const planned = allocatedKg
+              ? calcPlannedFromAllocated(allocatedKg, s.gramsPerPack, s.piecesPerUnit, s.piecesPerPack)
+              : calcPlanned(baseQty, baseUnit, s.gramsPerPack, s.piecesPerUnit, s.piecesPerPack);
+
             const actual = s.actualQty !== "" ? Number(s.actualQty) : null;
             const waste  = actual != null && planned != null ? planned - actual : null;
             const isCountMode = Number(s.piecesPerUnit) > 0 || Number(s.piecesPerPack) > 0;
+            const isGroupBased = !!item.purchaseItem.group;
 
             return (
               <div key={item.id} className="border border-gray-100 rounded-lg p-4 space-y-4">
@@ -457,7 +567,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 space-y-1">
                         <Input
-                          placeholder="🔍 Tìm sản phẩm để đổi..."
+                          placeholder="Tìm sản phẩm để đổi..."
                           className="text-xs h-7 bg-white w-full max-w-[250px]"
                           value={productSearch[item.id] || ""}
                           onChange={(e) => setProductSearch((prev) => ({ ...prev, [item.id]: e.target.value }))}
@@ -487,6 +597,12 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                           {item.product.name}
                           {item.product.skuShopify && ` · ${item.product.skuShopify}`}
                         </div>
+                        {/* Source purchase item info */}
+                        {isGroupBased && (
+                          <div className="text-xs text-purple-600 bg-purple-50 rounded px-1.5 py-0.5 inline-block">
+                            Nhóm: {item.purchaseItem.group?.name}
+                          </div>
+                        )}
                         {/* Label links */}
                         <div className="mt-1 flex items-center gap-2">
                           {item.product.labelImageUrl && (
@@ -521,7 +637,17 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                           )}
                         </div>
                       </div>
-                      {actual != null && <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />}
+                      <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                        {actual != null && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                        {/* Delete item button */}
+                        <button
+                          onClick={() => handleDeleteItem(item.id)}
+                          className="p-1 text-gray-300 hover:text-red-500 rounded transition-colors"
+                          title="Xóa mục này"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -532,9 +658,31 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                     <p className="text-xs font-semibold text-orange-700">
                       Cấu hình đóng gói
                       <span className="font-normal text-orange-500 ml-1">
-                        (mua: {item.purchaseItem.quantity} {item.product.unit})
+                        (mua: {item.purchaseItem.quantity} {item.purchaseItem.group?.costUnit ?? item.product.unit})
                       </span>
                     </p>
+
+                    {/* Allocated qty field (for group-based items) */}
+                    {isGroupBased && (
+                      <div>
+                        <Label className="text-xs text-purple-700">
+                          Nguyên liệu phân bổ cho SKU này (kg)
+                        </Label>
+                        <Input
+                          type="number" min={0} step="0.1"
+                          placeholder={`Tổng: ${item.purchaseItem.quantity} ${item.purchaseItem.group?.costUnit ?? "kg"}`}
+                          value={s.allocatedQty}
+                          onChange={(e) => setField(item.id, "allocatedQty", e.target.value)}
+                          className="h-8 mt-1 text-sm border-purple-200 focus:border-purple-400"
+                        />
+                        {s.allocatedQty && (
+                          <p className="text-xs text-purple-600 mt-0.5">
+                            Phân bổ: {s.allocatedQty} kg để tính gói
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     <div className="flex items-center gap-2">
                       <div className="flex-1">
                         <Label className="text-xs text-gray-500">Gram / gói</Label>
@@ -547,7 +695,9 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                       </div>
                       <div className="pt-5 text-gray-300 text-sm">hoặc</div>
                       <div className="flex-1">
-                        <Label className="text-xs text-gray-500">Hạt / {item.product.unit} mua</Label>
+                        <Label className="text-xs text-gray-500">
+                          Hạt / {isGroupBased ? "kg" : item.product.unit} mua
+                        </Label>
                         <Input
                           type="number" min={0} placeholder="VD: 1000"
                           value={s.piecesPerUnit}
@@ -571,15 +721,15 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                     <div className="flex items-center gap-2 text-sm font-medium">
                       {isCountMode && Number(s.piecesPerUnit) > 0 && Number(s.piecesPerPack) > 0 ? (
                         <span className="text-gray-600">
-                          {item.purchaseItem.quantity} {item.product.unit}
-                          {" × "}<span className="text-orange-700">{s.piecesPerUnit}</span> hạt/{item.product.unit}
+                          {allocatedKg ?? item.purchaseItem.quantity} {isGroupBased ? "kg" : item.product.unit}
+                          {" × "}<span className="text-orange-700">{s.piecesPerUnit}</span> hạt/{isGroupBased ? "kg" : item.product.unit}
                           {" ÷ "}<span className="text-orange-700">{s.piecesPerPack}</span> hạt/gói
                           {" = "}
                           <span className="text-blue-700 text-base font-bold">{planned ?? "..."} gói</span>
                         </span>
                       ) : s.gramsPerPack && Number(s.gramsPerPack) > 0 ? (
                         <span className="text-gray-600">
-                          {item.purchaseItem.quantity} {item.product.unit}
+                          {allocatedKg ?? item.purchaseItem.quantity} {isGroupBased ? "kg" : item.product.unit}
                           {" ÷ "}<span className="text-orange-700">{s.gramsPerPack}g</span>/gói
                           {" = "}
                           <span className="text-blue-700 text-base font-bold">{planned ?? "..."} gói</span>
@@ -594,16 +744,21 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                 {/* Done mode: show formula summary */}
                 {isDone && (
                   <div className="text-sm text-gray-500 bg-gray-50 rounded p-2">
+                    {item.allocatedQty && (
+                      <span className="text-purple-600 block text-xs mb-1">
+                        Phân bổ: {item.allocatedQty} kg nguyên liệu
+                      </span>
+                    )}
                     {item.piecesPerUnit && item.piecesPerPack ? (
                       <span>
-                        {item.purchaseItem.quantity} {item.product.unit}
-                        {" × "}{item.piecesPerUnit} hạt/{item.product.unit}
+                        {item.allocatedQty ?? item.purchaseItem.quantity} {item.allocatedQty ? "kg" : item.product.unit}
+                        {" × "}{item.piecesPerUnit} hạt/{item.allocatedQty ? "kg" : item.product.unit}
                         {" ÷ "}{item.piecesPerPack} hạt/gói
                         {" = "}<strong className="text-blue-700">{item.plannedQty} gói</strong>
                       </span>
                     ) : item.gramsPerPack ? (
                       <span>
-                        {item.purchaseItem.quantity} {item.product.unit}
+                        {item.allocatedQty ?? item.purchaseItem.quantity} {item.allocatedQty ? "kg" : item.product.unit}
                         {" ÷ "}{item.gramsPerPack}g/gói
                         {" = "}<strong className="text-blue-700">{item.plannedQty} gói</strong>
                       </span>
@@ -656,6 +811,128 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
             );
           })}
         </div>
+
+        {/* Add SKU button */}
+        {!isDone && (
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            {!showAddItem ? (
+              <Button
+                size="sm" variant="outline"
+                className="h-7 text-xs text-purple-700 border-purple-300 hover:bg-purple-50"
+                onClick={() => setShowAddItem(true)}
+              >
+                <Plus className="h-3 w-3 mr-1" />
+                Thêm mã SKU (phân bổ từ nhóm)
+              </Button>
+            ) : (
+              <div className="rounded-lg border border-purple-200 bg-purple-50 p-3 space-y-3">
+                <p className="text-xs font-semibold text-purple-700">Thêm SKU từ nguyên liệu nhóm</p>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-xs text-gray-500">Dòng nguyên liệu (đơn mua)</Label>
+                    <select
+                      className="mt-1 h-8 w-full rounded-md border border-purple-200 bg-white px-2 text-xs"
+                      value={addItemState.purchaseItemId}
+                      onChange={(e) => setAddItemState((p) => ({ ...p, purchaseItemId: e.target.value }))}
+                    >
+                      <option value="">— Chọn dòng nguyên liệu —</option>
+                      {purchaseItemsForAdd.map((pi) => (
+                        <option key={pi.id} value={pi.id}>
+                          {pi.group?.name ?? "SKU item"} · {pi.quantity} {pi.group?.costUnit ?? "kg"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-gray-500">Nguyên liệu phân bổ (kg)</Label>
+                    <Input
+                      type="number" min={0} step="0.1" placeholder="VD: 3"
+                      value={addItemState.allocatedQty}
+                      onChange={(e) => setAddItemState((p) => ({ ...p, allocatedQty: e.target.value }))}
+                      className="h-8 mt-1 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="text-xs text-gray-500">Sản phẩm SKU</Label>
+                  <Input
+                    placeholder="Tìm sản phẩm (nhập 2+ ký tự)..."
+                    className="h-7 text-xs mt-1"
+                    value={addItemState.productSearch}
+                    onChange={(e) => setAddItemState((p) => ({ ...p, productSearch: e.target.value }))}
+                  />
+                  <select
+                    className="mt-1 h-8 w-full rounded-md border border-purple-200 bg-white px-2 text-xs"
+                    value={addItemState.productId}
+                    onChange={(e) => setAddItemState((p) => ({ ...p, productId: e.target.value }))}
+                  >
+                    <option value="">
+                      {addItemState.productSearch.trim().length >= 2
+                        ? `— ${addItemFilteredProducts.length} kết quả —`
+                        : `— Nhập 2+ ký tự để tìm (hiện ${addItemFilteredProducts.length}/tổng) —`}
+                    </option>
+                    {addItemFilteredProducts.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nameVi ? `${p.nameVi} (${p.name.substring(0, 35)})` : p.name} · {p.unit}
+                        {p.gramsPerUnit ? ` · ${p.gramsPerUnit}g/gói` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <Label className="text-xs text-gray-500">Gram / gói</Label>
+                    <Input
+                      type="number" min={0} placeholder="VD: 200"
+                      value={addItemState.gramsPerPack}
+                      onChange={(e) => setAddItemState((p) => ({ ...p, gramsPerPack: e.target.value }))}
+                      className="h-8 mt-1 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-gray-500">Hạt / kg</Label>
+                    <Input
+                      type="number" min={0} placeholder="VD: 1000"
+                      value={addItemState.piecesPerUnit}
+                      onChange={(e) => setAddItemState((p) => ({ ...p, piecesPerUnit: e.target.value }))}
+                      className="h-8 mt-1 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-gray-500">Hạt / gói</Label>
+                    <Input
+                      type="number" min={0} placeholder="VD: 150"
+                      value={addItemState.piecesPerPack}
+                      onChange={(e) => setAddItemState((p) => ({ ...p, piecesPerPack: e.target.value }))}
+                      className="h-8 mt-1 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    size="sm" className="h-7 text-xs bg-purple-600 hover:bg-purple-700 text-white"
+                    onClick={handleAddItem}
+                  >
+                    Thêm SKU
+                  </Button>
+                  <Button
+                    size="sm" variant="ghost" className="h-7 text-xs"
+                    onClick={() => {
+                      setShowAddItem(false);
+                      setAddItemState({ productId: "", productSearch: "", purchaseItemId: "", allocatedQty: "", gramsPerPack: "", piecesPerUnit: "", piecesPerPack: "" });
+                    }}
+                  >
+                    <X className="h-3 w-3 mr-1" /> Huỷ
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Cost analysis */}

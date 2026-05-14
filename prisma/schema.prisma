@@ -26,6 +26,21 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+// ── Nhóm sản phẩm — gom các SKU/listing cùng 1 loại hàng ──────────────────────
+// VD: "Mung Bean Seeds" gồm 200g, 400g, 1kg → cùng giá mua gốc
+model ProductGroup {
+  id          String    @id @default(cuid())
+  name        String    // Tên nhóm, VD: "Mung Bean Seeds"
+  baseCostVnd Float?    // Giá mua gốc (VND / đơn vị)
+  costUnit    String    @default("kg") // Đơn vị tính giá: "kg", "pack", "piece"...
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products      Product[]
+  purchaseItems PurchaseItem[]
+}
+
 model Product {
   id         String  @id @default(cuid())
   name       String
@@ -37,6 +52,10 @@ model Product {
   // Dùng khi thêm mã hàng mới lên Shopify cho kho Bros mà không có Amazon SKU cũ.
   skuBros    String?
   unit       String  @default("kg")
+
+  // Nhóm sản phẩm (optional)
+  groupId    String?
+  group      ProductGroup? @relation(fields: [groupId], references: [id])
 
   // ── Đóng gói theo TRỌNG LƯỢNG (weight-based) ───────────────────────────────
   // gramsPerUnit: số gram trong 1 gói bán (VD: 200 = mỗi gói 200g)
@@ -142,15 +161,17 @@ model PurchaseItem {
   id              String        @id @default(cuid())
   purchaseOrderId String
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  productId       String
-  product         Product       @relation(fields: [productId], references: [id])
+  productId       String?
+  product         Product?      @relation(fields: [productId], references: [id])
+  groupId         String?
+  group           ProductGroup? @relation(fields: [groupId], references: [id])
   quantity        Float
   priceVnd        Float
   subtotalVnd     Float
   notes           String?       // Ghi chú per dòng hàng
 
   salesItems       SalesItem[]
-  productionItem   ProductionItem?
+  productionItems  ProductionItem[]
 }
 
 model Payment {
@@ -477,13 +498,14 @@ model ProductionItem {
   id                String          @id @default(cuid())
   productionOrderId String
   productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
-  purchaseItemId    String          @unique  // 1 purchase item → 1 production item
+  purchaseItemId    String          // many production items can share 1 purchase item (group-based)
   purchaseItem      PurchaseItem    @relation(fields: [purchaseItemId], references: [id])
   productId         String
   product           Product         @relation(fields: [productId], references: [id])
 
   plannedQty        Float   // Số gói dự kiến (tự động tính)
   actualQty         Float?  // Số gói thực tế sau khi đóng xong
+  allocatedQty      Float?  // Nguyên liệu phân bổ cho SKU này (kg) — dùng khi PurchaseItem theo nhóm
 
   // Snapshot cấu hình đóng gói tại thời điểm tạo lệnh
   // (lưu lại để hiển thị đúng ngay cả khi Product thay đổi sau này)

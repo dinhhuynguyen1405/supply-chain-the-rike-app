@@ -92,20 +92,22 @@ export async function POST(req: NextRequest) {
           purchaseOrderId: order.id,
           status: "pending",
           items: {
-            create: order.items.map((pi) => ({
-              purchaseItemId: pi.id,
-              productId: pi.productId,
-              gramsPerPack:  pi.product.gramsPerUnit,
-              piecesPerUnit: pi.product.piecesPerUnit,
-              piecesPerPack: pi.product.piecesPerPack,
-              plannedQty: calcPlannedQty(
-                pi.quantity,
-                pi.product.unit,
-                pi.product.gramsPerUnit,
-                pi.product.piecesPerUnit,
-                pi.product.piecesPerPack,
-              ),
-            })),
+            create: order.items
+              .filter((pi) => pi.productId != null)
+              .map((pi) => ({
+                purchaseItemId: pi.id,
+                productId: pi.productId!,
+                gramsPerPack:  pi.product?.gramsPerUnit ?? null,
+                piecesPerUnit: pi.product?.piecesPerUnit ?? null,
+                piecesPerPack: pi.product?.piecesPerPack ?? null,
+                plannedQty: pi.product ? calcPlannedQty(
+                  pi.quantity,
+                  pi.product.unit,
+                  pi.product.gramsPerUnit,
+                  pi.product.piecesPerUnit,
+                  pi.product.piecesPerPack,
+                ) : 0,
+              })),
           },
         },
       });

@@ -12,6 +12,7 @@ import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils
 import Link from "next/link";
 import { toast } from "sonner";
 import { ProductImageGallery } from "@/components/product-image-gallery";
+import { BarcodeGenerator } from "@/components/barcode-generator";
 
 interface PurchaseHistoryItem {
   id: string;
@@ -163,21 +164,40 @@ export default function ProductHistoryPage({
         )}
       </div>
 
-      {/* SKU info */}
+      {/* SKU + Barcode */}
       {(product.skuShopify || product.skuTiktok) && (
-        <Card className="p-4 flex gap-6">
-          {product.skuShopify && (
-            <div>
-              <p className="text-xs text-gray-400">SKU Shopify</p>
-              <p className="font-mono text-sm font-medium text-gray-700">{product.skuShopify}</p>
+        <Card className="p-5">
+          <div className="grid gap-6 sm:grid-cols-2">
+            {/* SKU list */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">SKU</p>
+              {product.skuShopify && (
+                <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                  <div>
+                    <p className="text-[10px] text-gray-400 mb-0.5">Shopify</p>
+                    <p className="font-mono text-sm font-semibold text-gray-800">{product.skuShopify}</p>
+                  </div>
+                </div>
+              )}
+              {product.skuTiktok && (
+                <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                  <div>
+                    <p className="text-[10px] text-gray-400 mb-0.5">TikTok</p>
+                    <p className="font-mono text-sm font-semibold text-gray-800">{product.skuTiktok}</p>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-          {product.skuTiktok && (
+
+            {/* Barcode / QR generator */}
             <div>
-              <p className="text-xs text-gray-400">SKU TikTok</p>
-              <p className="font-mono text-sm font-medium text-gray-700">{product.skuTiktok}</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Barcode / QR</p>
+              <BarcodeGenerator
+                sku={product.skuShopify ?? product.skuTiktok ?? ""}
+                label={product.nameVi ?? product.name}
+              />
             </div>
-          )}
+          </div>
         </Card>
       )}
 

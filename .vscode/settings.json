@@ -7,6 +7,10 @@
         "/^npm rebuild better-sqlite3$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "git push": true,
+        "npx ts-node": true,
+        "npx tsx": true,
+        "npx tsc": true
     }
 }

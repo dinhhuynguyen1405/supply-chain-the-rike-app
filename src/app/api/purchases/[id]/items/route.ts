@@ -1,5 +1,5 @@
 /**
- * PATCH /api/purchases/[id]/items  — đổi productId hoặc sửa qty/price của purchase item
+ * PATCH /api/purchases/[id]/items  — đổi productId/groupId hoặc sửa qty/price của purchase item
  * POST  /api/purchases/[id]/items  — thêm dòng hàng mới vào đơn
  * DELETE /api/purchases/[id]/items — xoá 1 dòng hàng khỏi đơn
  */
@@ -7,14 +7,14 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest } from "next/server";
 import { calcPlannedQty } from "@/lib/utils";
 
-// ── PATCH: đổi sản phẩm HOẶC sửa qty/price ──────────────────────────────────
+// ── PATCH: đổi sản phẩm / nhóm HOẶC sửa qty/price ──────────────────────────────────
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: purchaseOrderId } = await params;
   const body = await req.json();
-  const { itemId, productId, quantity, priceVnd } = body;
+  const { itemId, productId, groupId, quantity, priceVnd } = body;
 
   if (!itemId) {
     return Response.json({ error: "Cần truyền itemId" }, { status: 400 });
@@ -23,7 +23,7 @@ export async function PATCH(
   // Lấy purchase item hiện tại
   const purchaseItem = await prisma.purchaseItem.findFirst({
     where: { id: itemId, purchaseOrderId },
-    include: { productionItem: true },
+    include: { productionItems: true },
   });
   if (!purchaseItem) return Response.json({ error: "Item không tìm thấy" }, { status: 404 });
 
@@ -32,7 +32,8 @@ export async function PATCH(
   const newQty = quantity !== undefined ? Number(quantity) : purchaseItem.quantity;
   const newPrice = priceVnd !== undefined ? Number(priceVnd) : purchaseItem.priceVnd;
 
-  if (productId !== undefined) updateData.productId = productId;
+  if (productId !== undefined) updateData.productId = productId || null;
+  if (groupId !== undefined) updateData.groupId = groupId || null;
   if (quantity !== undefined) updateData.quantity = newQty;
   if (priceVnd !== undefined) {
     updateData.priceVnd = newPrice;
@@ -47,9 +48,9 @@ export async function PATCH(
     data: updateData,
   });
 
-  // Nếu có ProductionItem liên kết → cập nhật
-  if (purchaseItem.productionItem) {
-    const effectiveProductId = productId ?? purchaseItem.productId;
+  // Nếu có ProductionItem liên kết → cập nhật (chỉ khi có productId)
+  const effectiveProductId = productId !== undefined ? (productId || null) : purchaseItem.productId;
+  if (purchaseItem.productionItems.length > 0 && effectiveProductId) {
     const newProduct = await prisma.product.findUnique({
       where: { id: effectiveProductId },
       select: { unit: true, gramsPerUnit: true, piecesPerUnit: true, piecesPerPack: true },
@@ -62,18 +63,23 @@ export async function PATCH(
         newProduct.piecesPerUnit,
         newProduct.piecesPerPack,
       );
-      await prisma.productionItem.update({
-        where: { id: purchaseItem.productionItem.id },
-        data: {
-          ...(productId ? {
-            productId,
-            gramsPerPack: newProduct.gramsPerUnit,
-            piecesPerUnit: newProduct.piecesPerUnit,
-            piecesPerPack: newProduct.piecesPerPack,
-          } : {}),
-          plannedQty: newPlanned,
-        },
-      });
+      // Update all linked production items
+      await Promise.all(
+        purchaseItem.productionItems.map((prodItem) =>
+          prisma.productionItem.update({
+            where: { id: prodItem.id },
+            data: {
+              ...(productId ? {
+                productId,
+                gramsPerPack: newProduct.gramsPerUnit,
+                piecesPerUnit: newProduct.piecesPerUnit,
+                piecesPerPack: newProduct.piecesPerPack,
+              } : {}),
+              plannedQty: newPlanned,
+            },
+          })
+        )
+      );
     }
   }
 
@@ -90,10 +96,14 @@ export async function POST(
 ) {
   const { id: purchaseOrderId } = await params;
   const body = await req.json();
-  const { productId, quantity, priceVnd, notes } = body;
+  const { productId, groupId, quantity, priceVnd, notes } = body;
 
-  if (!productId || !quantity || priceVnd === undefined) {
-    return Response.json({ error: "Cần truyền productId, quantity, priceVnd" }, { status: 400 });
+  // Require either productId or groupId (not both null)
+  if (!productId && !groupId) {
+    return Response.json({ error: "Cần truyền productId hoặc groupId" }, { status: 400 });
+  }
+  if (!quantity || priceVnd === undefined) {
+    return Response.json({ error: "Cần truyền quantity và priceVnd" }, { status: 400 });
   }
 
   const qty = Number(quantity);
@@ -103,7 +113,8 @@ export async function POST(
   const newItem = await prisma.purchaseItem.create({
     data: {
       purchaseOrderId,
-      productId,
+      productId: productId || null,
+      groupId:   groupId   || null,
       quantity: qty,
       priceVnd: price,
       subtotalVnd: subtotal,
@@ -111,36 +122,39 @@ export async function POST(
     },
   });
 
-  // Nếu đơn đã có productionOrder → thêm productionItem mới
-  const productionOrder = await prisma.productionOrder.findUnique({
-    where: { purchaseOrderId },
-    select: { id: true },
-  });
-  if (productionOrder) {
-    const product = await prisma.product.findUnique({
-      where: { id: productId },
-      select: { unit: true, gramsPerUnit: true, piecesPerUnit: true, piecesPerPack: true },
+  // Nếu có productId và đơn đã có productionOrder → thêm productionItem mới
+  if (productId) {
+    const productionOrder = await prisma.productionOrder.findUnique({
+      where: { purchaseOrderId },
+      select: { id: true },
     });
-    if (product) {
-      await prisma.productionItem.create({
-        data: {
-          productionOrderId: productionOrder.id,
-          purchaseItemId: newItem.id,
-          productId,
-          gramsPerPack: product.gramsPerUnit,
-          piecesPerUnit: product.piecesPerUnit,
-          piecesPerPack: product.piecesPerPack,
-          plannedQty: calcPlannedQty(
-            qty,
-            product.unit,
-            product.gramsPerUnit,
-            product.piecesPerUnit,
-            product.piecesPerPack,
-          ),
-        },
+    if (productionOrder) {
+      const product = await prisma.product.findUnique({
+        where: { id: productId },
+        select: { unit: true, gramsPerUnit: true, piecesPerUnit: true, piecesPerPack: true },
       });
+      if (product) {
+        await prisma.productionItem.create({
+          data: {
+            productionOrderId: productionOrder.id,
+            purchaseItemId: newItem.id,
+            productId,
+            gramsPerPack: product.gramsPerUnit,
+            piecesPerUnit: product.piecesPerUnit,
+            piecesPerPack: product.piecesPerPack,
+            plannedQty: calcPlannedQty(
+              qty,
+              product.unit,
+              product.gramsPerUnit,
+              product.piecesPerUnit,
+              product.piecesPerPack,
+            ),
+          },
+        });
+      }
     }
   }
+  // Group-based items: production items are added manually from the production page
 
   await recalcOrderTotal(purchaseOrderId);
   return Response.json(newItem, { status: 201 });
@@ -156,7 +170,7 @@ export async function DELETE(
 
   if (!itemId) return Response.json({ error: "Cần truyền itemId" }, { status: 400 });
 
-  // Xoá ProductionItem trước (nếu có) vì không có cascade từ PurchaseItem
+  // Xoá tất cả ProductionItem liên kết trước (không còn @unique, có thể nhiều)
   await prisma.productionItem.deleteMany({ where: { purchaseItemId: itemId } });
 
   await prisma.purchaseItem.delete({

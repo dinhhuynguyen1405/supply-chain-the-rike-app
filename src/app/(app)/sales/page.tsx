@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Loader2, TrendingUp, RefreshCw } from "lucide-react";
+import { Loader2, TrendingUp, RefreshCw, Download } from "lucide-react";
+import { exportSalesExcel } from "@/lib/excel-export";
 
 type SalesItem = {
   id: string;
@@ -83,14 +84,24 @@ export default function SalesPage() {
           </h1>
           <p className="text-sm text-gray-500 mt-1">Tổng hợp các sản phẩm đã bán từ Shopify (các đơn đã thanh toán)</p>
         </div>
-        <button
-          onClick={handleSyncOrders}
-          disabled={syncing}
-          className="flex items-center gap-2 rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-          {syncing ? "Đang đồng bộ..." : "Đồng bộ Đơn hàng Shopify"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportSalesExcel(salesItems)}
+            disabled={salesItems.length === 0}
+            className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-40"
+          >
+            <Download className="h-4 w-4" />
+            Excel
+          </button>
+          <button
+            onClick={handleSyncOrders}
+            disabled={syncing}
+            className="flex items-center gap-2 rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Đang đồng bộ..." : "Đồng bộ Đơn hàng Shopify"}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -61,7 +61,7 @@ async function autoUpdateInventoryOnArrival(batchId: string, destinationWarehous
           items: {
             include: {
               product: true,
-              productionItem: true,
+              productionItems: true,
             },
           },
           productionOrder: {
@@ -101,7 +101,7 @@ async function autoUpdateInventoryOnArrival(batchId: string, destinationWarehous
     } else {
       // ── Luồng A: Hàng sỉ (không qua sản xuất) ────────────────────────────
       for (const item of po.items) {
-        if (!item.productId) continue;
+        if (!item.productId || !item.product) continue;
         const p = item.product;
         const sellingQty = toSellingUnits(
           item.quantity,

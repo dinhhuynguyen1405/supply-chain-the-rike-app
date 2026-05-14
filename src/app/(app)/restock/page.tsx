@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,130 +7,607 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import {
-  RefreshCw, AlertTriangle, TrendingUp, Package, Search,
+  RefreshCw, AlertTriangle, Package, Search,
   ShoppingCart, DollarSign, BarChart3, Clock, ArrowUpRight,
+  ChevronDown, ChevronUp, TrendingUp, TrendingDown,
+  Truck, Box, ListChecks, Calculator, Minus, DatabaseZap,
+  Layers,
 } from "lucide-react";
-import type { RestockItem, RestockResponse, RestockSummary } from "@/app/api/analytics/restock/route";
+import type {
+  GroupedRestockItem, RestockItem, RestockResponse, RestockSummary,
+  ShoppingListGroup, MonthlyData, TrendAnalysis,
+} from "@/app/api/analytics/restock/route";
 
-type UrgencyTab = "all" | "critical" | "warning" | "healthy" | "overstocked";
+// ── Config ───────────────────────────────────────────────────────────────────
 
-const URGENCY_CONFIG: Record<RestockItem["urgency"], {
-  label: string; color: string; bg: string; border: string; dot: string;
-}> = {
-  critical:    { label: "Cần nhập gấp",  color: "text-red-700",    bg: "bg-red-50",    border: "border-red-200",    dot: "bg-red-500"    },
-  warning:     { label: "Theo dõi",      color: "text-amber-700",  bg: "bg-amber-50",  border: "border-amber-200",  dot: "bg-amber-500"  },
-  healthy:     { label: "Ổn",            color: "text-green-700",  bg: "bg-green-50",  border: "border-green-200",  dot: "bg-green-500"  },
-  overstocked: { label: "Đang thừa",     color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-200",   dot: "bg-blue-500"   },
-  no_sales:    { label: "Chưa bán",      color: "text-gray-500",   bg: "bg-gray-50",   border: "border-gray-200",   dot: "bg-gray-300"   },
-};
+type UrgencyTab = "all" | "critical" | "warning" | "healthy" | "overstocked" | "unmapped";
 
-function formatDaysLeft(days: number | null): string {
-  if (days === null) return "—";
-  if (days === 0) return "Hết hàng";
-  if (days < 30) return `${days} ngày`;
-  const months = Math.round(days / 30 * 10) / 10;
-  if (months < 12) return `${months} tháng`;
-  return `${Math.round(months / 12 * 10) / 10} năm`;
+const URGENCY = {
+  critical:    { label: "Cần nhập gấp",  color: "text-red-700",    bg: "bg-red-50",    border: "border-red-200",    dot: "bg-red-500",    row: "bg-red-50/30"    },
+  warning:     { label: "Theo dõi",      color: "text-amber-700",  bg: "bg-amber-50",  border: "border-amber-200",  dot: "bg-amber-500",  row: "bg-amber-50/15"  },
+  healthy:     { label: "Ổn định",       color: "text-green-700",  bg: "bg-green-50",  border: "border-green-200",  dot: "bg-green-500",  row: ""                },
+  overstocked: { label: "Đang thừa",     color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-200",   dot: "bg-blue-500",   row: ""                },
+  no_sales:    { label: "Chưa bán",      color: "text-gray-500",   bg: "bg-gray-50",   border: "border-gray-200",   dot: "bg-gray-300",   row: ""                },
+  unmapped:    { label: "Chưa có mã",    color: "text-purple-700", bg: "bg-purple-50", border: "border-purple-200", dot: "bg-purple-500", row: "opacity-75"      },
+} as const;
+
+const TARGET_OPTIONS = [
+  { days: 30,  label: "30 ngày" },
+  { days: 60,  label: "60 ngày" },
+  { days: 90,  label: "90 ngày", recommend: true },
+  { days: 180, label: "180 ngày" },
+];
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmt(n: number) { return n.toLocaleString("vi-VN"); }
+function fmtM(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `${(n / 1_000).toFixed(0)}K`;
+  return n.toString();
+}
+function fmtRaw(n: number | null, unit: string | null) {
+  if (n == null) return null;
+  const s = n % 1 === 0 ? n.toFixed(0) : n.toFixed(1);
+  return `${s} ${unit ?? ""}`.trim();
 }
 
-function DaysLeftBadge({ item }: { item: RestockItem }) {
-  const cfg = URGENCY_CONFIG[item.urgency];
-  const text = item.totalStock === 0 && item.soldPerDay > 0
-    ? "Hết hàng"
-    : formatDaysLeft(item.daysLeft);
+// ── Mini bar chart ────────────────────────────────────────────────────────────
+
+function MonthlyChart({ months }: { months: MonthlyData[] }) {
+  if (!months.length) return null;
+  const maxVal = Math.max(...months.map(m => m.soldPer30Days), 1);
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${cfg.bg} ${cfg.color}`}>
-      {text}
+    <div className="flex items-end gap-1 h-14" title="Tốc độ bán quy đổi 30 ngày theo từng tháng">
+      {months.map(m => {
+        const pct = (m.soldPer30Days / maxVal) * 100;
+        const isPartial = m.activeDays < 25;
+        return (
+          <div key={m.month} className="flex flex-col items-center gap-0.5 flex-1 min-w-[18px] max-w-[32px]">
+            <span className="text-[8px] text-gray-400 leading-none">
+              {m.soldPer30Days >= 10 ? Math.round(m.soldPer30Days) : m.soldPer30Days.toFixed(1)}
+            </span>
+            <div className="w-full">
+              <div
+                className={`w-full rounded-t transition-all ${isPartial ? "opacity-50" : ""} ${
+                  pct > 80 ? "bg-indigo-500" : pct > 40 ? "bg-indigo-400" : "bg-indigo-200"
+                }`}
+                style={{ height: `${Math.max(3, (pct / 100) * 36)}px` }}
+                title={`${m.label}: ${m.sold} gói (${m.soldPer30Days.toFixed(1)}/30 ngày)${isPartial ? " *partial" : ""}`}
+              />
+            </div>
+            <span className="text-[8px] text-gray-400 leading-none truncate w-full text-center">{m.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Trend badge ───────────────────────────────────────────────────────────────
+
+function TrendBadge({ t }: { t: TrendAnalysis }) {
+  if (t.trend === "new") return (
+    <span className="text-[10px] text-gray-400 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">Mới</span>
+  );
+  if (t.trend === "growing") return (
+    <span className="flex items-center gap-0.5 text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
+      <TrendingUp className="h-2.5 w-2.5" /> +{t.momChangePct}%/tháng
+    </span>
+  );
+  if (t.trend === "declining") return (
+    <span className="flex items-center gap-0.5 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">
+      <TrendingDown className="h-2.5 w-2.5" /> {t.momChangePct}%/tháng
+    </span>
+  );
+  return (
+    <span className="flex items-center gap-0.5 text-[10px] text-gray-500 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">
+      <Minus className="h-2.5 w-2.5" /> Ổn định
     </span>
   );
 }
 
-export default function RestockPage() {
-  const [data, setData] = useState<RestockResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<UrgencyTab>("all");
-  const [search, setSearch] = useState("");
+// ── Forecast row ──────────────────────────────────────────────────────────────
 
-  async function load() {
+function ForecastRow({ t }: { t: TrendAnalysis }) {
+  return (
+    <div className="flex items-center gap-6 flex-wrap text-xs">
+      <div>
+        <span className="text-gray-400">Gần đây (60 ngày): </span>
+        <span className="font-semibold text-indigo-700">{t.recentVelocity} gói/tháng</span>
+      </div>
+      <div>
+        <span className="text-gray-400">Dự báo tháng tới: </span>
+        <span className={`font-semibold ${t.forecastNext1M > t.recentVelocity ? "text-emerald-700" : t.forecastNext1M < t.recentVelocity ? "text-red-600" : "text-gray-700"}`}>
+          {t.forecastNext1M} gói
+        </span>
+      </div>
+      <div>
+        <span className="text-gray-400">Dự báo 3 tháng: </span>
+        <span className="font-semibold text-gray-700">{t.forecastNext3M} gói</span>
+      </div>
+      <div>
+        <span className="text-gray-400">Dự báo 6 tháng: </span>
+        <span className="font-semibold text-gray-500">{t.forecastNext6M} gói</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Variant sub-row (inside detail panel) ────────────────────────────────────
+
+function VariantRow({ v }: { v: RestockItem }) {
+  const cfg = URGENCY[v.urgency];
+  return (
+    <tr className="border-b border-gray-100 last:border-0 hover:bg-gray-50/40">
+      <td className="px-3 py-2">
+        <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-semibold ${cfg.bg} ${cfg.color} ${cfg.border}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+          {cfg.label}
+        </span>
+      </td>
+      <td className="px-3 py-2">
+        <p className="text-sm font-medium text-gray-800">{v.localName ?? v.title}</p>
+        <p className="text-[10px] font-mono text-gray-400 mt-0.5">{v.sku}</p>
+      </td>
+      <td className="px-3 py-2 text-right">
+        <span className={`text-sm font-bold tabular-nums ${v.totalStock === 0 ? "text-red-500" : "text-gray-700"}`}>
+          {v.totalStock}
+        </span>
+        {v.pipelinePacks > 0 && (
+          <span className="text-[10px] text-indigo-500 ml-1 font-medium">+{v.pipelinePacks}</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right text-sm text-indigo-600 font-medium tabular-nums">
+        {v.trend.recentVelocity}/th
+      </td>
+      <td className="px-3 py-2 text-right text-sm">
+        {v.daysLeft == null ? (
+          <span className="text-gray-400">—</span>
+        ) : v.daysLeft < 30 ? (
+          <span className="text-red-600 font-semibold">{v.daysLeft} ngày</span>
+        ) : (
+          <span className="text-gray-600">{(v.daysLeft / 30).toFixed(1)} tháng</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right">
+        {v.restock.suggestedPacks > 0 ? (
+          <span className="text-emerald-700 font-semibold text-sm">
+            {v.restock.suggestedRawAmount != null
+              ? fmtRaw(v.restock.suggestedRawAmount, v.restock.suggestedRawUnit)
+              : `${v.restock.suggestedPacks} gói`}
+          </span>
+        ) : (
+          <span className="text-gray-400 text-xs">—</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right">
+        {v.restock.estimatedCostVnd != null ? (
+          <span className="text-orange-600 text-xs font-medium">{fmtM(v.restock.estimatedCostVnd)} ₫</span>
+        ) : <span className="text-gray-400 text-xs">—</span>}
+      </td>
+    </tr>
+  );
+}
+
+// ── Detail panel ─────────────────────────────────────────────────────────────
+
+function DetailPanel({ item }: { item: GroupedRestockItem }) {
+  const { trend, cost, restock, variants } = item;
+  const multiVariant = variants.length > 1;
+  const primaryVariant = variants.find(v => v.packaging.packagingFormula) ?? variants[0];
+
+  return (
+    <div className="px-5 pb-5 space-y-4 bg-gray-50/50 border-t border-gray-100">
+      {/* Combined trend chart */}
+      <div className="pt-3">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+          {multiVariant
+            ? `Lịch sử bán hàng tổng hợp nhóm · ${variants.length} mã SKU · ${trend.numMonths} tháng`
+            : `Lịch sử bán hàng · ${trend.numMonths} tháng dữ liệu`}
+        </p>
+        <MonthlyChart months={trend.months} />
+        <div className="mt-2"><ForecastRow t={trend} /></div>
+      </div>
+
+      {/* Variant breakdown table (only when multiple variants) */}
+      {multiVariant && (
+        <div>
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            Chi tiết từng mã SKU ({variants.length} mã)
+          </p>
+          {item.hasAnyStock && (
+            <div className="mb-2 flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+              <Package className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                <strong>Đang có hàng:</strong>{" "}
+                {item.variantsWithStock.join(", ")} — tổng nhóm còn{" "}
+                <strong>{item.effectiveStock} gói</strong> (tồn: {item.totalStock} + đang về: {item.pipelinePacks})
+              </span>
+            </div>
+          )}
+          <div className="rounded-lg border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm whitespace-nowrap">
+              <thead className="bg-gray-100/80 text-[10px] text-gray-500 uppercase font-bold tracking-wider border-b border-gray-200">
+                <tr>
+                  <th className="px-3 py-2 text-left">Tình trạng</th>
+                  <th className="px-3 py-2 text-left min-w-[160px]">Sản phẩm / SKU</th>
+                  <th className="px-3 py-2 text-right">Tồn kho</th>
+                  <th className="px-3 py-2 text-right">Tốc độ</th>
+                  <th className="px-3 py-2 text-right">Còn dùng</th>
+                  <th className="px-3 py-2 text-right text-emerald-700 bg-emerald-50/50">Cần mua</th>
+                  <th className="px-3 py-2 text-right">Chi phí</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {variants.map(v => <VariantRow key={v.sku} v={v} />)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 3-column: packaging / cost / recommendation */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* Công thức đóng gói (primary variant) */}
+        <div className="rounded-lg bg-indigo-50 border border-indigo-100 p-3">
+          <p className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wide mb-2 flex items-center gap-1">
+            <Box className="h-3 w-3" /> Công thức đóng gói
+          </p>
+          {primaryVariant?.packaging.packagingFormula ? (
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-indigo-800">{primaryVariant.packaging.packagingFormula}</p>
+              {primaryVariant.packaging.packsPerRawUnit && (
+                <p className="text-xs text-indigo-500">
+                  = {primaryVariant.packaging.packsPerRawUnit % 1 === 0
+                      ? primaryVariant.packaging.packsPerRawUnit
+                      : primaryVariant.packaging.packsPerRawUnit.toFixed(1)} gói / {primaryVariant.packaging.gramsPerUnit ? "kg" : primaryVariant.packaging.unit}
+                </p>
+              )}
+              {multiVariant && variants.filter(v => v.packaging.packagingFormula && v.sku !== primaryVariant?.sku).map(v => (
+                <p key={v.sku} className="text-[10px] text-indigo-400">{v.sku}: {v.packaging.packagingFormula}</p>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-indigo-400 italic">Chưa nhập thông tin đóng gói</p>
+          )}
+        </div>
+
+        {/* Chi phí */}
+        <div className="rounded-lg bg-orange-50 border border-orange-100 p-3">
+          <p className="text-[10px] font-semibold text-orange-500 uppercase tracking-wide mb-2 flex items-center gap-1">
+            <Calculator className="h-3 w-3" /> Chi phí nguyên liệu
+          </p>
+          {cost.baseCostVnd != null ? (
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-orange-800">{fmt(cost.baseCostVnd)} ₫/{cost.costUnit}</p>
+              {primaryVariant?.cost.costPerPack != null && (
+                <p className="text-xs text-orange-600 font-medium">→ {fmt(primaryVariant.cost.costPerPack)} ₫/gói</p>
+              )}
+            </div>
+          ) : cost.groupName ? (
+            <p className="text-xs text-orange-400 italic">Nhóm "{cost.groupName}" chưa có giá mua gốc</p>
+          ) : (
+            <p className="text-xs text-orange-400 italic">Chưa gán nhóm sản phẩm</p>
+          )}
+        </div>
+
+        {/* Khuyến nghị tổng nhóm */}
+        <div className={`rounded-lg border p-3 ${restock.suggestedPacks > 0 ? "bg-emerald-50 border-emerald-100" : "bg-gray-50 border-gray-100"}`}>
+          <p className={`text-[10px] font-semibold uppercase tracking-wide mb-2 flex items-center gap-1 ${restock.suggestedPacks > 0 ? "text-emerald-600" : "text-gray-400"}`}>
+            <ShoppingCart className="h-3 w-3" /> Khuyến nghị tổng nhóm
+            {restock.basis === "trend" && (
+              <span className="ml-1 text-[9px] bg-purple-100 text-purple-600 rounded px-1 py-0.5 normal-case font-medium">theo trend</span>
+            )}
+          </p>
+          {restock.suggestedPacks > 0 ? (
+            <div className="space-y-1">
+              {restock.suggestedRawAmount != null ? (
+                <>
+                  <p className="text-base font-bold text-emerald-800">
+                    {fmtRaw(restock.suggestedRawAmount, restock.suggestedRawUnit)}
+                  </p>
+                  <p className="text-xs text-emerald-600">→ đóng ~{restock.suggestedPacks} gói</p>
+                </>
+              ) : (
+                <p className="text-base font-bold text-emerald-800">{restock.suggestedPacks} gói</p>
+              )}
+              {item.totalEstimatedCostVnd != null && (
+                <p className="text-xs text-orange-700 font-medium">Chi phí: {fmt(Math.round(item.totalEstimatedCostVnd))} ₫</p>
+              )}
+              <p className="text-[10px] text-emerald-500 mt-1">Đủ dùng thêm ~{restock.targetDays} ngày</p>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 italic">{restock.recommendation}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Shopping list card ────────────────────────────────────────────────────────
+
+function ShoppingListCard({ list }: { list: ShoppingListGroup[] }) {
+  const [collapsed, setCollapsed] = useState(false);
+  if (!list.length) return null;
+  const totalCost  = list.reduce((s, g) => s + (g.totalCostVnd ?? 0), 0);
+  const totalPacks = list.reduce((s, g) => s + g.items.reduce((acc, i) => acc + i.suggestedPacks, 0), 0);
+
+  return (
+    <div className="rounded-xl shadow-sm border border-emerald-200 bg-white overflow-hidden mb-6">
+      <button
+        className="w-full relative overflow-hidden flex items-center justify-between px-6 py-5 bg-gradient-to-r from-emerald-50 via-teal-50/50 to-white hover:bg-emerald-100/50 transition-all border-b border-emerald-100"
+        onClick={() => setCollapsed(c => !c)}
+      >
+        <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500" />
+        <div className="flex items-center gap-4">
+          <div className="rounded-full bg-emerald-100 p-2.5 shadow-sm">
+            <ListChecks className="h-5 w-5 text-emerald-700" />
+          </div>
+          <div className="text-left">
+            <p className="font-bold text-lg text-emerald-900">Danh Sách Cần Mua (Shopping List)</p>
+            <p className="text-sm text-emerald-600/80 font-medium mt-0.5">
+              <span className="text-emerald-700 font-bold">{list.length}</span> nhóm NL thô ·{" "}
+              <span className="text-emerald-700 font-bold">{totalPacks.toLocaleString()}</span> gói cần mua/đóng
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-6">
+          {totalCost > 0 && (
+            <div className="text-right">
+              <p className="text-[11px] font-bold text-emerald-600/70 uppercase tracking-widest mb-1">TỔNG CHI PHÍ ƯỚC TÍNH</p>
+              <p className="text-2xl font-black text-orange-600 tracking-tight drop-shadow-sm">{totalCost >= 1_000_000 ? fmtM(totalCost) : fmt(totalCost)} ₫</p>
+            </div>
+          )}
+          <div className="bg-white rounded-full p-1.5 shadow-sm border border-gray-100">
+            {collapsed ? <ChevronDown className="h-5 w-5 text-emerald-600" /> : <ChevronUp className="h-5 w-5 text-emerald-600" />}
+          </div>
+        </div>
+      </button>
+
+      {!collapsed && (
+        <div className="divide-y divide-gray-100 bg-gray-50/40">
+          {list.map((group) => (
+            <div key={group.groupName} className="p-6 hover:bg-white transition-colors group">
+              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                <div className="flex-1 w-full overflow-x-auto">
+                  <div className="flex items-center gap-3 mb-4">
+                    <h3 className="text-base font-bold text-gray-900 group-hover:text-emerald-800 transition-colors uppercase tracking-wide">{group.groupName}</h3>
+                    {group.totalRawAmount != null && group.rawUnit && (
+                      <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 font-bold px-3 py-1 border border-emerald-200 shadow-sm text-sm">
+                        CẦN MUA: {fmtRaw(group.totalRawAmount, group.rawUnit)}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                    <table className="w-full text-sm text-left whitespace-nowrap">
+                      <thead className="bg-gray-100/80 text-gray-600 uppercase text-[10px] font-bold tracking-wider border-b border-gray-200">
+                        <tr>
+                          <th className="px-4 py-3">Phân Loại</th>
+                          <th className="px-4 py-3 min-w-[200px]">SKU / Sản Phẩm</th>
+                          <th className="px-4 py-3 text-right">Tồn VN/US</th>
+                          <th className="px-4 py-3 text-right text-indigo-700 bg-indigo-50/50">Hàng Đang Về</th>
+                          <th className="px-4 py-3 text-right">Dự Báo (3T)</th>
+                          <th className="px-4 py-3 text-right text-emerald-700 bg-emerald-50/50">Cần Đóng/Mua</th>
+                          <th className="px-4 py-3 text-right">Chi Phí</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {group.items.map((it) => {
+                          const cfg = URGENCY[it.urgency];
+                          return (
+                            <tr key={it.sku} className="hover:bg-gray-50/50 transition-colors">
+                              <td className="px-4 py-3">
+                                <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold border ${cfg.bg} ${cfg.color} ${cfg.border || "border-transparent"}`}>
+                                  <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+                                  {cfg.label}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-gray-900 truncate max-w-[200px]">{it.localName}</div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-[10px] text-gray-500 font-mono bg-gray-100 px-1.5 rounded">{it.sku}</span>
+                                  {it.trend === "growing" && <span className="text-emerald-600 flex items-center gap-0.5 text-[10px] font-bold bg-emerald-50 px-1 rounded"><TrendingUp className="h-3 w-3" /> tăng</span>}
+                                  {it.trend === "declining" && <span className="text-red-500 flex items-center gap-0.5 text-[10px] font-bold bg-red-50 px-1 rounded"><TrendingDown className="h-3 w-3" /> giảm</span>}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right font-medium text-gray-600">{it.totalStock != null ? fmt(it.totalStock) : "—"}</td>
+                              <td className="px-4 py-3 text-right bg-indigo-50/20">
+                                <div className="flex flex-col items-end">
+                                  <span className="font-bold text-indigo-700">{it.pipelinePacks != null ? fmt(it.pipelinePacks) : "—"}</span>
+                                  {(it.totalProducedPacks || it.totalPurchasedRaw) ? (
+                                    <span className="text-[9px] text-indigo-500/80 font-medium">
+                                      {it.totalProducedPacks ? `SX: ${fmt(it.totalProducedPacks)}` : ""}
+                                      {it.totalProducedPacks && it.totalPurchasedRaw ? " | " : ""}
+                                      {it.totalPurchasedRaw ? `Mua: ${fmt(it.totalPurchasedRaw)}` : ""}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right font-medium text-gray-600">{fmt(it.forecastNext3M)}</td>
+                              <td className="px-4 py-3 text-right bg-emerald-50/20">
+                                <span className="inline-flex items-center justify-center font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded min-w-[50px] border border-emerald-200">
+                                  {it.suggestedPacks}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {it.estimatedCostVnd != null ? (
+                                  <span className="font-semibold text-orange-600">{fmt(Math.round(it.estimatedCostVnd))} ₫</span>
+                                ) : <span className="text-gray-400">—</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {group.totalCostVnd != null && (
+                  <div className="md:w-36 shrink-0 md:text-right md:border-l border-t md:border-t-0 border-gray-200 pt-4 md:pt-0 pl-0 md:pl-5 mt-4 md:mt-0 flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider bg-gray-100 px-2 py-1 rounded inline-block mb-2">Chi phí nhóm</p>
+                    <p className="text-xl font-black text-orange-600 tabular-nums drop-shadow-sm">{fmt(Math.round(group.totalCostVnd))} ₫</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+export default function RestockPage() {
+  const [data, setData]         = useState<RestockResponse | null>(null);
+  const [loading, setLoading]   = useState(false);
+  const [tab, setTab]           = useState<UrgencyTab>("all");
+  const [search, setSearch]     = useState("");
+  const [targetDays, setTargetDays] = useState(90);
+  const [leadDays]              = useState(21);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [syncing, setSyncing]   = useState(false);
+  const [syncResult, setSyncResult] = useState<{ total: number; created: number; oldestOrder: string } | null>(null);
+
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/analytics/restock");
+      const res = await fetch(`/api/analytics/restock?targetDays=${targetDays}&leadDays=${leadDays}`);
       if (!res.ok) throw new Error("Lỗi tải dữ liệu");
       setData(await res.json());
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Lỗi không xác định");
-    } finally {
-      setLoading(false);
-    }
-  }
+      toast.error(e instanceof Error ? e.message : "Lỗi");
+    } finally { setLoading(false); }
+  }, [targetDays, leadDays]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function syncFullHistory() {
+    setSyncing(true); setSyncResult(null);
+    try {
+      const res = await fetch("/api/sync/shopify/full-history", { method: "POST" });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error ?? "Lỗi sync"); return; }
+      setSyncResult(d);
+      toast.success(`Đã đồng bộ ${d.total.toLocaleString()} đơn · ${d.created} đơn mới`);
+      await load();
+    } catch { toast.error("Lỗi kết nối"); }
+    finally { setSyncing(false); }
+  }
 
   const filtered = useMemo(() => {
     if (!data) return [];
     const q = search.toLowerCase();
-    return data.items.filter((item) => {
+    return data.items.filter(item => {
       const matchSearch = !q ||
-        item.title.toLowerCase().includes(q) ||
-        (item.localName ?? "").toLowerCase().includes(q) ||
-        item.sku.toLowerCase().includes(q);
-      const matchTab = tab === "all" || item.urgency === tab;
-      return matchSearch && matchTab;
+        item.name.toLowerCase().includes(q) ||
+        (item.cost.groupName ?? "").toLowerCase().includes(q) ||
+        item.variants.some(v =>
+          v.sku.toLowerCase().includes(q) ||
+          (v.localName ?? "").toLowerCase().includes(q) ||
+          v.title.toLowerCase().includes(q)
+        );
+      return matchSearch && (tab === "all" || item.urgency === tab);
     });
   }, [data, tab, search]);
 
   const counts = useMemo(() => {
     if (!data) return {} as Record<string, number>;
     const c: Record<string, number> = { all: data.items.length };
-    for (const item of data.items) {
-      c[item.urgency] = (c[item.urgency] ?? 0) + 1;
-    }
+    for (const i of data.items) c[i.urgency] = (c[i.urgency] ?? 0) + 1;
     return c;
   }, [data]);
 
   const summary: RestockSummary | null = data?.summary ?? null;
 
-  const TABS: { key: UrgencyTab; label: string; icon?: React.ElementType }[] = [
-    { key: "all",        label: "Tất cả" },
-    { key: "critical",   label: "Cần nhập gấp" },
-    { key: "warning",    label: "Theo dõi" },
-    { key: "healthy",    label: "Ổn" },
-    { key: "overstocked",label: "Đang thừa" },
+  const TABS: { key: UrgencyTab; label: string }[] = [
+    { key: "all",         label: "Tất cả"       },
+    { key: "critical",    label: "Cần nhập gấp"  },
+    { key: "warning",     label: "Theo dõi"      },
+    { key: "healthy",     label: "Ổn định"       },
+    { key: "overstocked", label: "Đang thừa"     },
+    { key: "unmapped",    label: "Chưa có mã"    },
   ];
+
+  function toggleExpand(id: string) {
+    setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+
+      {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Phân tích tồn kho</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Phân tích tồn kho & kế hoạch mua</h1>
           <p className="text-sm text-gray-500">
-            Dự báo dựa trên tốc độ bán thực tế — đề xuất sản phẩm cần nhập thêm
+            {data
+              ? `${data.summary.periodDays} ngày dữ liệu · ${data.summary.totalOrders.toLocaleString()} đơn · từ ${new Date(data.summary.oldestOrder).toLocaleDateString("vi-VN")} · phân tích theo nhóm sản phẩm`
+              : "Toàn bộ lịch sử store · phân tích theo nhóm sản phẩm · dự báo 3–6 tháng"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {data && (
-            <p className="text-xs text-gray-400">
-              Cập nhật: {new Date(data.generatedAt).toLocaleString("vi-VN")}
-            </p>
-          )}
-          <Button size="sm" variant="outline" onClick={load} disabled={loading}>
+        <div className="flex items-center gap-2 flex-wrap">
+          {data && <p className="text-xs text-gray-400">{new Date(data.generatedAt).toLocaleString("vi-VN")}</p>}
+          <Button size="sm" variant="outline" onClick={load} disabled={loading || syncing}>
             <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             Làm mới
+          </Button>
+          <Button size="sm" onClick={syncing ? undefined : syncFullHistory} disabled={syncing || loading}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5">
+            <DatabaseZap className={`h-3.5 w-3.5 ${syncing ? "animate-pulse" : ""}`} />
+            {syncing ? "Đang đồng bộ..." : "Đồng bộ toàn bộ lịch sử"}
           </Button>
         </div>
       </div>
 
-      {/* Summary cards */}
+      {/* ── Sync result banner ── */}
+      {syncResult && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 flex items-center gap-3 text-sm">
+          <DatabaseZap className="h-4 w-4 text-indigo-600 shrink-0" />
+          <div className="text-indigo-800">
+            <span className="font-semibold">Đã đồng bộ xong:</span>{" "}
+            <span className="font-bold">{syncResult.total.toLocaleString()}</span> đơn ·{" "}
+            <span className="font-bold text-emerald-700">{syncResult.created}</span> đơn mới ·{" "}
+            từ {new Date(syncResult.oldestOrder).toLocaleDateString("vi-VN")}
+          </div>
+          <button onClick={() => setSyncResult(null)} className="ml-auto text-indigo-400 hover:text-indigo-600">✕</button>
+        </div>
+      )}
+
+      {/* ── Target days ── */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <Clock className="h-4 w-4 text-gray-400" />
+          <span className="text-sm text-gray-600 font-medium">Mục tiêu tồn kho:</span>
+        </div>
+        <div className="flex gap-1.5">
+          {TARGET_OPTIONS.map(opt => (
+            <button key={opt.days} onClick={() => setTargetDays(opt.days)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium border transition-all ${
+                targetDays === opt.days ? "bg-green-600 text-white border-green-600" : "bg-white text-gray-600 border-gray-200 hover:border-green-300 hover:text-green-700"
+              }`}>
+              {opt.label}
+              {opt.recommend && targetDays !== opt.days && <span className="ml-1 text-[10px] text-green-500">✓</span>}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-400">
+          <Truck className="h-3.5 w-3.5" /> + {leadDays} ngày vận chuyển VN→US
+        </div>
+      </div>
+
+      {/* ── Summary cards ── */}
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-1">
               <ShoppingCart className="h-4 w-4 text-blue-500" />
-              <span className="text-xs font-medium text-gray-500">Tổng đơn hàng</span>
+              <span className="text-xs font-medium text-gray-500">Tổng đơn</span>
             </div>
-            <p className="text-2xl font-bold text-gray-900">{summary.totalOrders}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{summary.ordersPerDay} đơn/ngày</p>
+            <p className="text-2xl font-bold text-gray-900">{summary.totalOrders.toLocaleString()}</p>
+            <p className="text-xs text-gray-400">{summary.ordersPerDay}/ngày · {summary.periodDays} ngày</p>
           </Card>
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-1">
@@ -138,59 +615,59 @@ export default function RestockPage() {
               <span className="text-xs font-medium text-gray-500">Doanh thu</span>
             </div>
             <p className="text-2xl font-bold text-green-700">${summary.totalRevenueUsd.toLocaleString()}</p>
-            <p className="text-xs text-gray-400 mt-0.5">${summary.revenuePerDay}/ngày</p>
+            <p className="text-xs text-gray-400">${summary.revenuePerDay}/ngày</p>
           </Card>
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-1">
-              <Clock className="h-4 w-4 text-purple-500" />
-              <span className="text-xs font-medium text-gray-500">Chu kỳ phân tích</span>
+              <Layers className="h-4 w-4 text-indigo-500" />
+              <span className="text-xs font-medium text-gray-500">Nhóm SP</span>
             </div>
-            <p className="text-2xl font-bold text-gray-900">{summary.periodDays}</p>
-            <p className="text-xs text-gray-400 mt-0.5">ngày dữ liệu</p>
+            <p className="text-2xl font-bold text-gray-900">{data ? data.items.filter(i => i.urgency !== "no_sales" && i.urgency !== "unmapped").length : "—"}</p>
+            <p className="text-xs text-gray-400">có doanh thu · {data ? data.items.length : "—"} tổng</p>
           </Card>
           <Card className={`p-4 ${(counts.critical ?? 0) > 0 ? "border-red-200 bg-red-50" : ""}`}>
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle className={`h-4 w-4 ${(counts.critical ?? 0) > 0 ? "text-red-500" : "text-gray-300"}`} />
-              <span className={`text-xs font-medium ${(counts.critical ?? 0) > 0 ? "text-red-600" : "text-gray-500"}`}>
-                Cần nhập gấp
-              </span>
+              <span className={`text-xs font-medium ${(counts.critical ?? 0) > 0 ? "text-red-600" : "text-gray-500"}`}>Cần nhập gấp</span>
             </div>
-            <p className={`text-2xl font-bold ${(counts.critical ?? 0) > 0 ? "text-red-700" : "text-gray-300"}`}>
-              {counts.critical ?? 0}
-            </p>
-            <p className="text-xs text-gray-400 mt-0.5">sản phẩm</p>
+            <p className={`text-2xl font-bold ${(counts.critical ?? 0) > 0 ? "text-red-700" : "text-gray-300"}`}>{counts.critical ?? 0}</p>
+            <p className="text-xs text-gray-400">nhóm SP</p>
           </Card>
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-1">
-              <BarChart3 className="h-4 w-4 text-indigo-500" />
-              <span className="text-xs font-medium text-gray-500">SKU đang bán</span>
+              <Package className="h-4 w-4 text-orange-500" />
+              <span className="text-xs font-medium text-gray-500">Gói cần mua</span>
             </div>
-            <p className="text-2xl font-bold text-gray-900">{summary && data ? data.items.filter(i => i.urgency !== "no_sales").length : "—"}</p>
-            <p className="text-xs text-gray-400 mt-0.5">sản phẩm có doanh thu</p>
+            <p className="text-2xl font-bold text-orange-700">{summary.totalRestockPacks.toLocaleString()}</p>
+            <p className="text-xs text-gray-400">theo dự báo trend</p>
+          </Card>
+          <Card className={`p-4 ${summary.totalRestockCostVnd > 0 ? "border-orange-200 bg-orange-50" : ""}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <Calculator className="h-4 w-4 text-orange-500" />
+              <span className="text-xs font-medium text-orange-600">Chi phí NL</span>
+            </div>
+            <p className="text-xl font-bold text-orange-700">{fmtM(summary.totalRestockCostVnd)} ₫</p>
+            <p className="text-xs text-gray-400">nguyên liệu thô</p>
           </Card>
         </div>
       )}
 
-      {/* Tabs */}
+      {/* ── Shopping list ── */}
+      {!loading && <ShoppingListCard list={data?.shoppingList ?? []} />}
+
+      {/* ── Tabs ── */}
       <div className="flex gap-1 rounded-xl bg-gray-100 p-1 flex-wrap">
         {TABS.map(({ key, label }) => {
-          const count = counts[key] ?? 0;
-          const isActive = tab === key;
-          const cfg = key !== "all" ? URGENCY_CONFIG[key as RestockItem["urgency"]] : null;
+          const count  = counts[key] ?? 0;
+          const active = tab === key;
+          const cfg    = key !== "all" ? URGENCY[key as RestockItem["urgency"]] : null;
           return (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
-                isActive ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"
-              }`}
-            >
+            <button key={key} onClick={() => setTab(key)}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${active ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}>
               {cfg && <span className={`h-2 w-2 rounded-full ${cfg.dot}`} />}
               {label}
               {count > 0 && (
-                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  isActive ? (cfg ? `${cfg.bg} ${cfg.color}` : "bg-gray-100 text-gray-600") : "bg-gray-200 text-gray-500"
-                }`}>
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? (cfg ? `${cfg.bg} ${cfg.color}` : "bg-gray-100 text-gray-600") : "bg-gray-200 text-gray-500"}`}>
                   {count}
                 </span>
               )}
@@ -199,163 +676,205 @@ export default function RestockPage() {
         })}
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-        <Input
-          className="pl-9"
-          placeholder="Tìm theo tên sản phẩm, SKU..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      {/* ── Search + expand ── */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input className="pl-9" placeholder="Tìm nhóm sản phẩm, tên, SKU..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="flex gap-1 text-xs text-gray-500 shrink-0">
+          <button onClick={() => setExpanded(new Set(data?.items.map(i => i.id)))} className="px-2 py-1.5 rounded hover:bg-gray-100 flex items-center gap-1">
+            <ChevronDown className="h-3 w-3" /> Mở tất cả
+          </button>
+          <button onClick={() => setExpanded(new Set())} className="px-2 py-1.5 rounded hover:bg-gray-100 flex items-center gap-1">
+            <ChevronUp className="h-3 w-3" /> Thu lại
+          </button>
+        </div>
       </div>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+      {/* ── Main table ── */}
+      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
         {loading ? (
           <div className="py-20 text-center text-gray-400">
             <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-gray-300" />
-            Đang phân tích dữ liệu...
+            Đang phân tích toàn bộ lịch sử store...
           </div>
         ) : filtered.length === 0 ? (
-          <div className="py-20 text-center text-gray-400">Không có sản phẩm nào phù hợp</div>
+          <div className="py-20 text-center text-gray-400">Không có sản phẩm phù hợp</div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-xs border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Sản phẩm</th>
-                <th className="px-4 py-3 text-right font-medium text-indigo-600">Tốc độ bán</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Đã bán</th>
-                <th className="px-4 py-3 text-right font-medium text-green-600">Doanh thu</th>
-                <th className="px-4 py-3 text-right font-medium text-orange-600">Tồn kho</th>
-                <th className="px-4 py-3 text-center font-medium text-gray-500">Còn dùng</th>
-                <th className="px-4 py-3 text-center font-medium text-gray-500">Trạng thái</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.map((item) => {
-                const cfg = URGENCY_CONFIG[item.urgency];
-                return (
-                  <tr
-                    key={item.sku}
-                    className={`transition-colors hover:bg-gray-50/80 ${
-                      item.urgency === "critical" ? "bg-red-50/30" :
-                      item.urgency === "warning"  ? "bg-amber-50/20" : ""
-                    }`}
+          <>
+            {/* Column headers */}
+            <div className="hidden md:grid gap-2 items-center bg-gray-50 px-4 py-2.5 border-b border-gray-200 text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
+              style={{ gridTemplateColumns: "1fr 120px 90px 90px 100px 130px 130px 28px" }}>
+              <span>Nhóm sản phẩm · xu hướng</span>
+              <span className="text-indigo-500 text-right">Tốc độ · dự báo</span>
+              <span className="text-right">Đã bán</span>
+              <span className="text-green-600 text-right">Doanh thu</span>
+              <span className="text-orange-500 text-right">Tồn kho</span>
+              <span className="text-center">Còn dùng</span>
+              <span className="text-center">Khuyến nghị</span>
+              <span />
+            </div>
+
+            {filtered.map(item => {
+              const cfg   = URGENCY[item.urgency];
+              const isOpen = expanded.has(item.id);
+              const multiVariant = item.variants.length > 1;
+
+              return (
+                <div key={item.id} className={`border-b border-gray-100 last:border-0 ${cfg.row}`}>
+                  {/* Main row */}
+                  <div
+                    className="hidden md:grid gap-2 items-center px-4 py-3 hover:bg-black/[.02] transition-colors cursor-pointer"
+                    style={{ gridTemplateColumns: "1fr 120px 90px 90px 100px 130px 130px 28px" }}
+                    onClick={() => toggleExpand(item.id)}
                   >
-                    {/* Product */}
-                    <td className="px-4 py-3 max-w-xs">
+                    {/* Name + trend */}
+                    <div className="min-w-0">
                       <div className="flex items-start gap-2">
-                        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${cfg.dot}`} />
-                        <div className="min-w-0">
-                          {item.productId ? (
-                            <Link
-                              href={`/products/${item.productId}`}
-                              className="font-medium text-gray-900 hover:text-green-600 hover:underline flex items-center gap-1 leading-snug"
-                            >
-                              <span className="truncate">{item.localName ?? item.title}</span>
-                              <ArrowUpRight className="h-3 w-3 shrink-0 text-gray-300" />
-                            </Link>
-                          ) : (
-                            <p className="font-medium text-gray-900 truncate leading-snug">
-                              {item.localName ?? item.title}
-                            </p>
-                          )}
-                          <p className="text-xs text-gray-400 truncate max-w-[280px] mt-0.5" title={item.title}>
-                            {item.title !== (item.localName ?? item.title) ? item.title : ""}
-                          </p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="font-mono text-[10px] text-gray-300">{item.sku}</span>
-                            {item.priceUsd && (
-                              <span className="text-[10px] font-semibold text-green-600">${item.priceUsd}</span>
+                        <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${cfg.dot}`} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-semibold text-gray-900 text-sm truncate">{item.name}</p>
+                            {multiVariant && (
+                              <span className="flex items-center gap-0.5 text-[10px] text-indigo-500 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5 shrink-0">
+                                <Layers className="h-2.5 w-2.5" /> {item.variants.length} mã
+                              </span>
                             )}
                           </div>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {/* Stock coverage indicator */}
+                            {item.hasAnyStock && (item.urgency === "critical" || item.urgency === "warning") && (
+                              <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 font-medium">
+                                Đang có hàng ({item.variantsWithStock.length} mã)
+                              </span>
+                            )}
+                            {item.cost.groupName && !item.hasAnyStock && (
+                              <span className="text-[10px] text-indigo-400 bg-indigo-50 rounded px-1.5 py-0.5">{item.cost.groupName}</span>
+                            )}
+                            <TrendBadge t={item.trend} />
+                          </div>
+                          {/* Variant SKUs preview (when collapsed) */}
+                          {multiVariant && !isOpen && (
+                            <div className="flex items-center gap-1 mt-1 flex-wrap">
+                              {item.variants.slice(0, 4).map(v => (
+                                <span key={v.sku} className={`text-[9px] font-mono px-1 rounded border ${v.effectiveStock > 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-gray-100 border-gray-200 text-gray-400"}`}>
+                                  {v.sku}
+                                </span>
+                              ))}
+                              {item.variants.length > 4 && (
+                                <span className="text-[9px] text-gray-400">+{item.variants.length - 4} mã khác</span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </td>
+                    </div>
 
-                    {/* Velocity */}
-                    <td className="px-4 py-3 text-right">
-                      <p className="font-bold text-indigo-700 tabular-nums">
-                        {item.soldPerMonth >= 10
-                          ? Math.round(item.soldPerMonth)
-                          : item.soldPerMonth.toFixed(1)}
-                        <span className="text-xs font-normal text-gray-400">/tháng</span>
+                    {/* Velocity + forecast */}
+                    <div className="text-right">
+                      <p className="font-bold text-indigo-700 text-sm tabular-nums">
+                        {item.trend.recentVelocity >= 10 ? Math.round(item.trend.recentVelocity) : item.trend.recentVelocity}
+                        <span className="text-[10px] font-normal text-gray-400">/tháng</span>
                       </p>
-                      <p className="text-[11px] text-gray-400">{item.soldPerDay.toFixed(2)}/ngày</p>
-                    </td>
+                      <p className="text-[10px] text-purple-500 font-medium">dự báo: {item.trend.forecastNext1M}</p>
+                      <p className="text-[10px] text-gray-400">3T: {item.trend.forecastNext3M}</p>
+                    </div>
 
                     {/* Total sold */}
-                    <td className="px-4 py-3 text-right">
+                    <div className="text-right">
                       <p className="font-semibold text-gray-700 tabular-nums">{item.totalSold}</p>
-                      <p className="text-[11px] text-gray-400">{item.numOrders} đơn</p>
-                    </td>
+                      <p className="text-[10px] text-gray-400">{item.numOrders} đơn</p>
+                      <p className="text-[10px] text-gray-300">{item.trend.numMonths}T dữ liệu</p>
+                    </div>
 
                     {/* Revenue */}
-                    <td className="px-4 py-3 text-right">
+                    <div className="text-right">
                       <p className="font-semibold text-green-700">${item.revenueUsd.toLocaleString()}</p>
-                    </td>
+                    </div>
 
-                    {/* Stock breakdown */}
-                    <td className="px-4 py-3 text-right">
-                      <p className={`text-base font-bold tabular-nums ${
-                        item.totalStock === 0 ? "text-red-500" :
-                        item.totalStock <= 10 ? "text-amber-600" : "text-gray-700"
-                      }`}>
-                        {item.totalStock}
+                    {/* Stock (group aggregate) */}
+                    <div className="text-right">
+                      <p className={`text-base font-bold tabular-nums ${item.effectiveStock === 0 ? "text-red-500" : item.effectiveStock <= 10 ? "text-amber-600" : "text-gray-700"}`}>
+                        {item.effectiveStock}
                       </p>
-                      {item.brosQty > 0 && (
-                        <p className="text-[11px] text-purple-500">Bros: {item.brosQty}</p>
-                      )}
-                      {item.nhungQty > 0 && (
-                        <p className="text-[11px] text-orange-500">Nhung: {item.nhungQty}</p>
-                      )}
-                    </td>
+                      {item.nhungQty > 0 && <p className="text-[10px] text-orange-500">VN:{item.nhungQty}</p>}
+                      {item.brosQty  > 0 && <p className="text-[10px] text-purple-500">US:{item.brosQty}</p>}
+                      {item.pipelinePacks > 0 && <p className="text-[10px] text-indigo-500">→{item.pipelinePacks}</p>}
+                    </div>
 
                     {/* Days left */}
-                    <td className="px-4 py-3 text-center">
-                      <DaysLeftBadge item={item} />
-                    </td>
+                    <div className="text-center">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${cfg.bg} ${cfg.color}`}>
+                        {item.effectiveStock === 0 && item.soldPerMonth > 0 ? "Hết hàng"
+                          : item.daysLeft == null ? "—"
+                          : item.daysLeft < 30 ? `${item.daysLeft} ngày`
+                          : `${(item.daysLeft / 30).toFixed(1)} tháng`}
+                      </span>
+                    </div>
 
-                    {/* Urgency badge */}
-                    <td className="px-4 py-3 text-center">
-                      <Badge className={`text-xs ${cfg.bg} ${cfg.color} border ${cfg.border}`}>
-                        {cfg.label}
-                      </Badge>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    {/* Recommendation */}
+                    <div className="text-center">
+                      {item.totalSuggestedPacks > 0 ? (
+                        <div className="text-emerald-700 text-xs font-medium leading-snug">
+                          <p className="font-semibold">
+                            {item.restock.suggestedRawAmount != null
+                              ? fmtRaw(item.restock.suggestedRawAmount, item.restock.suggestedRawUnit)
+                              : `${item.totalSuggestedPacks} gói`}
+                          </p>
+                          {item.restock.suggestedRawAmount != null && (
+                            <p className="text-[10px] text-gray-400">~{item.totalSuggestedPacks} gói</p>
+                          )}
+                        </div>
+                      ) : (
+                        <Badge className={`text-xs ${cfg.bg} ${cfg.color} border ${cfg.border}`}>{cfg.label}</Badge>
+                      )}
+                    </div>
+
+                    {/* Toggle */}
+                    <div className="text-gray-400">
+                      {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </div>
+                  </div>
+
+                  {/* Mobile row */}
+                  <div className="md:hidden flex items-start gap-3 px-4 py-3 cursor-pointer" onClick={() => toggleExpand(item.id)}>
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${cfg.dot}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm text-gray-900 truncate">{item.name}</p>
+                      <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-500">
+                        {multiVariant && <span className="text-indigo-500">{item.variants.length} mã</span>}
+                        <span className="text-indigo-600 font-medium">{item.trend.recentVelocity}/tháng</span>
+                        <span>· còn {item.daysLeft ?? "—"} ngày</span>
+                        {item.totalSuggestedPacks > 0 && (
+                          <span className="text-emerald-600 font-medium">
+                            → {fmtRaw(item.restock.suggestedRawAmount, item.restock.suggestedRawUnit) ?? `${item.totalSuggestedPacks} gói`}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {isOpen ? <ChevronUp className="h-4 w-4 text-gray-400 shrink-0 mt-1" /> : <ChevronDown className="h-4 w-4 text-gray-400 shrink-0 mt-1" />}
+                  </div>
+
+                  {/* Detail panel */}
+                  {isOpen && <DetailPanel item={item} />}
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
 
-      {/* Legend */}
+      {/* ── Legend ── */}
       {!loading && data && (
-        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Quy tắc phân loại</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-gray-600">
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-red-500" />
-              <div><p className="font-medium text-red-700">Cần nhập gấp</p><p className="text-gray-400">Hết hàng hoặc còn &lt; 14 ngày</p></div>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-amber-500" />
-              <div><p className="font-medium text-amber-700">Theo dõi</p><p className="text-gray-400">Còn 14–90 ngày</p></div>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-green-500" />
-              <div><p className="font-medium text-green-700">Ổn</p><p className="text-gray-400">Còn 90 ngày – 1 năm</p></div>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
-              <div><p className="font-medium text-blue-700">Đang thừa</p><p className="text-gray-400">Còn &gt; 1 năm tồn kho</p></div>
-            </div>
-          </div>
-          <p className="text-[11px] text-gray-400 mt-3">
-            * Tốc độ bán tính từ ngày bán đầu tiên đến hôm nay. Tồn kho = Kho Nhung + Kho Bros.
-          </p>
+        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 text-xs text-gray-500 space-y-1.5">
+          <p className="font-semibold text-gray-600 mb-2">Cách tính</p>
+          <p>• <strong>Phân tích theo nhóm sản phẩm</strong>: nếu 1 nhóm có nhiều mã SKU, tồn kho được CỘNG DỒN → nếu bất kỳ mã nào đang có hàng, nhóm đó không bị xếp "Cần nhập gấp"</p>
+          <p>• <strong>Tốc độ gần đây</strong>: tổng gói bán toàn nhóm trong 60 ngày qua, quy đổi về /tháng</p>
+          <p>• <strong>Xu hướng MoM</strong>: linear regression trên tốc độ bán chuẩn hoá từng tháng (gói/30 ngày)</p>
+          <p>• <strong>Dự báo</strong>: áp dụng slope của xu hướng vào 3–6 tháng tới</p>
+          <p>• <strong>Khuyến nghị mua</strong>: nhu cầu dự báo trong {targetDays + leadDays} ngày ({targetDays} mục tiêu + {leadDays} ngày ship) trừ tồn kho hiện có</p>
+          <p>• <strong>Chi tiết mã SKU</strong>: bấm vào từng hàng để xem tình trạng tồn kho và khuyến nghị riêng từng mã</p>
         </div>
       )}
     </div>

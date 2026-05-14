@@ -5,7 +5,7 @@ import { triggerSheetSync } from "@/lib/sync-trigger";
 
 const include = {
   purchaseOrder: { include: { supplier: true } },
-  items: { include: { product: true, purchaseItem: true } },
+  items: { include: { product: true, purchaseItem: { include: { group: true } } } },
   costs: { orderBy: { createdAt: "asc" as const } },
 } as const;
 
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   // Lấy đơn mua + items + product
   const purchaseOrder = await prisma.purchaseOrder.findUnique({
     where: { id: purchaseOrderId },
-    include: { items: { include: { product: true } } },
+    include: { items: { include: { product: true, group: true } } },
   });
   if (!purchaseOrder || purchaseOrder.items.length === 0) {
     return Response.json({ error: "Đơn mua không có sản phẩm." }, { status: 400 });
@@ -51,9 +51,12 @@ export async function POST(req: NextRequest) {
 
   // Chi phí nguyên liệu — từng dòng sản phẩm
   for (const pi of purchaseOrder.items) {
+    const label = pi.product
+      ? `${pi.product.nameVi ?? pi.product.name} (${pi.quantity} ${pi.product.unit})`
+      : `${pi.group?.name ?? "Không rõ"} (${pi.quantity} ${pi.group?.costUnit ?? "kg"})`;
     autoCosts.push({
       type: "material",
-      description: `${pi.product.nameVi ?? pi.product.name} (${pi.quantity} ${pi.product.unit})`,
+      description: label,
       amountVnd: pi.subtotalVnd,
       purchaseOrderId,
     });
@@ -75,20 +78,22 @@ export async function POST(req: NextRequest) {
       purchaseOrderId,
       status: "pending",
       items: {
-        create: purchaseOrder.items.map((pi) => ({
-          purchaseItemId: pi.id,
-          productId: pi.productId,
-          gramsPerPack:  pi.product.gramsPerUnit,
-          piecesPerUnit: pi.product.piecesPerUnit,
-          piecesPerPack: pi.product.piecesPerPack,
-          plannedQty: calcPlannedQty(
-            pi.quantity,
-            pi.product.unit,
-            pi.product.gramsPerUnit,
-            pi.product.piecesPerUnit,
-            pi.product.piecesPerPack,
-          ),
-        })),
+        create: purchaseOrder.items
+          .filter((pi) => pi.productId != null)
+          .map((pi) => ({
+            purchaseItemId: pi.id,
+            productId: pi.productId!,
+            gramsPerPack:  pi.product?.gramsPerUnit ?? null,
+            piecesPerUnit: pi.product?.piecesPerUnit ?? null,
+            piecesPerPack: pi.product?.piecesPerPack ?? null,
+            plannedQty: pi.product ? calcPlannedQty(
+              pi.quantity,
+              pi.product.unit,
+              pi.product.gramsPerUnit,
+              pi.product.piecesPerUnit,
+              pi.product.piecesPerPack,
+            ) : 0,
+          })),
       },
       costs: { create: autoCosts },
     },

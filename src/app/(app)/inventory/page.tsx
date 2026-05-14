@@ -39,6 +39,7 @@ export default function InventoryPage() {
   const [saving, setSaving] = useState(false);
   const [initing, setIniting] = useState(false);
   const [search, setSearch] = useState("");
+  const [filterUnmapped, setFilterUnmapped] = useState(false);
   // sku → imageUrl từ Shopify (fallback cho những sản phẩm chưa có imageUrl trong DB)
   const [shopifyImages, setShopifyImages] = useState<Record<string, string>>({});
   // Unmatched Bros items
@@ -126,13 +127,15 @@ export default function InventoryPage() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return items.filter(
-      (p) =>
+    return items.filter((p) => {
+      if (filterUnmapped && p.skuShopify) return false;
+      return (
         (p.nameVi ?? "").toLowerCase().includes(q) ||
         p.name.toLowerCase().includes(q) ||
         (p.skuShopify ?? "").toLowerCase().includes(q)
-    );
-  }, [items, search]);
+      );
+    });
+  }, [items, search, filterUnmapped]);
 
   // Stats
   const nhungTotal   = items.reduce((s, p) => s + (edits[p.id] ?? p.nhungQty), 0);
@@ -226,15 +229,24 @@ export default function InventoryPage() {
         </Card>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-        <Input
-          className="pl-9"
-          placeholder="Tìm sản phẩm, SKU..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      {/* Search and Filters */}
+      <div className="flex flex-col sm:flex-row gap-4 items-center">
+        <div className="relative flex-1 w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            className="pl-9"
+            placeholder="Tìm sản phẩm, SKU..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <Button
+          variant={filterUnmapped ? "default" : "outline"}
+          onClick={() => setFilterUnmapped(!filterUnmapped)}
+          className={filterUnmapped ? "bg-amber-600 hover:bg-amber-700" : ""}
+        >
+          Chưa có mã Shopify
+        </Button>
       </div>
 
       {/* Main inventory table */}

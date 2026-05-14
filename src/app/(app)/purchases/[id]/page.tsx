@@ -12,8 +12,9 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Save, Plus, Trash2, CheckCircle2, Clock, ArrowUpCircle, ArrowDownCircle, Factory, Pencil, X } from "lucide-react";
+import { ArrowLeft, Save, Plus, Trash2, CheckCircle2, Clock, ArrowUpCircle, ArrowDownCircle, Factory, Pencil, X, FileText, Package } from "lucide-react";
 import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils";
+import { exportPurchaseOrderPDF, exportPackingSlipPDF } from "@/lib/pdf-export";
 
 interface Payment {
   id: string;
@@ -45,7 +46,9 @@ interface Order {
     priceVnd: number;
     subtotalVnd: number;
     notes: string | null;
-    product: { id: string; name: string; nameVi: string | null; unit: string; skuShopify: string | null; gramsPerUnit: number | null };
+    groupId: string | null;
+    group: { id: string; name: string; costUnit: string } | null;
+    product: { id: string; name: string; nameVi: string | null; unit: string; skuShopify: string | null; gramsPerUnit: number | null } | null;
   }[];
   payments: Payment[];
   productionOrder: {
@@ -92,15 +95,23 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   });
   // Products list for selectors
   const [allProducts, setAllProducts] = useState<{ id: string; name: string; nameVi: string | null; unit: string; gramsPerUnit: number | null }[]>([]);
+  // Groups list for group-mode selector
+  const [allGroups, setAllGroups] = useState<{ id: string; name: string; costUnit: string }[]>([]);
   // Inline edit state cho từng dòng hàng
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string>("");
+  const [editingGroupId, setEditingGroupId] = useState<string>("");
+  const [editingMode, setEditingMode] = useState<"sku" | "group">("sku");
   const [editingQty, setEditingQty] = useState<string>("");
   const [editingPrice, setEditingPrice] = useState<string>("");
   const [editingProductSearch, setEditingProductSearch] = useState<string>("");
+  const [editingGroupSearch, setEditingGroupSearch] = useState<string>("");
   // Thêm dòng hàng mới
   const [addingItem, setAddingItem] = useState(false);
-  const [newItem, setNewItem] = useState({ productId: "", quantity: "1", priceVnd: "", notes: "", productSearch: "" });
+  const [newItem, setNewItem] = useState({
+    productId: "", groupId: "", mode: "sku" as "sku" | "group",
+    quantity: "1", priceVnd: "", notes: "", productSearch: "", groupSearch: "",
+  });
 
   const load = () =>
     fetch(`/api/purchases/${id}`).then((r) => r.json()).then((o: Order) => {
@@ -121,6 +132,9 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     fetch("/api/products?limit=5000")
       .then((r) => r.json())
       .then((d) => setAllProducts(Array.isArray(d) ? d : (d.products ?? [])));
+    fetch("/api/product-groups")
+      .then((r) => r.json())
+      .then((d) => setAllGroups(Array.isArray(d) ? d : (d.groups ?? [])));
   }, [id]);
 
   async function save() {
@@ -163,15 +177,24 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
 
   function openEditItem(item: Order["items"][0]) {
     setEditingItemId(item.id);
-    setEditingProductId(item.product.id);
+    setEditingProductId(item.product?.id ?? "");
+    setEditingGroupId(item.groupId ?? "");
+    setEditingMode(item.groupId ? "group" : "sku");
     setEditingQty(String(item.quantity));
     setEditingPrice(String(item.priceVnd));
     setEditingProductSearch("");
+    setEditingGroupSearch("");
   }
 
   async function saveItem(itemId: string) {
     const body: Record<string, unknown> = { itemId };
-    if (editingProductId) body.productId = editingProductId;
+    if (editingMode === "group") {
+      body.groupId = editingGroupId || null;
+      body.productId = null;
+    } else {
+      body.productId = editingProductId || null;
+      body.groupId = null;
+    }
     if (editingQty) body.quantity = Number(editingQty);
     if (editingPrice !== "") body.priceVnd = Number(editingPrice);
     const res = await fetch(`/api/purchases/${id}/items`, {
@@ -180,7 +203,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      toast.success("Đã cập nhật dòng hàng ✓");
+      toast.success("Đã cập nhật dòng hàng");
       setEditingItemId(null);
       load();
     } else {
@@ -200,22 +223,24 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   }
 
   async function addNewItem() {
-    if (!newItem.productId) return toast.error("Chọn sản phẩm");
+    if (newItem.mode === "sku" && !newItem.productId) return toast.error("Chọn sản phẩm");
+    if (newItem.mode === "group" && !newItem.groupId) return toast.error("Chọn nhóm sản phẩm");
     if (!newItem.quantity || Number(newItem.quantity) <= 0) return toast.error("Nhập số lượng hợp lệ");
     const res = await fetch(`/api/purchases/${id}/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        productId: newItem.productId,
+        productId: newItem.mode === "sku" ? newItem.productId : null,
+        groupId:   newItem.mode === "group" ? newItem.groupId : null,
         quantity: Number(newItem.quantity),
         priceVnd: Number(newItem.priceVnd) || 0,
         notes: newItem.notes || null,
       }),
     });
     if (res.ok) {
-      toast.success("Đã thêm dòng hàng ✓");
+      toast.success("Đã thêm dòng hàng");
       setAddingItem(false);
-      setNewItem({ productId: "", quantity: "1", priceVnd: "", notes: "", productSearch: "" });
+      setNewItem({ productId: "", groupId: "", mode: "sku", quantity: "1", priceVnd: "", notes: "", productSearch: "", groupSearch: "" });
       load();
     } else {
       toast.error("Lỗi thêm dòng hàng");
@@ -280,9 +305,21 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
             {order.supplier.name}{" · "}{formatDate(order.orderDate)}
           </p>
         </div>
-        <Button onClick={save} className="bg-green-600 hover:bg-green-700">
-          <Save className="mr-2 h-4 w-4" /> Lưu
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5"
+            onClick={() => exportPurchaseOrderPDF(order)}>
+            <FileText className="h-3.5 w-3.5" /> Xuất PDF
+          </Button>
+          {order.productionOrder && (
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5"
+              onClick={() => exportPackingSlipPDF(order)}>
+              <Package className="h-3.5 w-3.5" /> Phiếu đóng gói
+            </Button>
+          )}
+          <Button onClick={save} className="bg-green-600 hover:bg-green-700">
+            <Save className="mr-2 h-4 w-4" /> Lưu
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -295,7 +332,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
               <Button
                 size="sm" variant="outline"
                 className="h-7 text-xs border-green-300 text-green-700 hover:bg-green-50"
-                onClick={() => { setAddingItem(true); setNewItem({ productId: "", quantity: "1", priceVnd: "", notes: "", productSearch: "" }); }}
+                onClick={() => { setAddingItem(true); setNewItem({ productId: "", groupId: "", mode: "sku", quantity: "1", priceVnd: "", notes: "", productSearch: "", groupSearch: "" }); }}
               >
                 <Plus className="mr-1 h-3 w-3" /> Thêm dòng
               </Button>
@@ -303,7 +340,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
-                  <th className="pb-2 text-left font-medium text-gray-500">Sản phẩm</th>
+                  <th className="pb-2 text-left font-medium text-gray-500">Sản phẩm / Nhóm</th>
                   <th className="pb-2 text-right font-medium text-gray-500">Số lượng</th>
                   <th className="pb-2 text-right font-medium text-gray-500">Thành phẩm</th>
                   <th className="pb-2 text-right font-medium text-gray-500">Đơn giá</th>
@@ -314,52 +351,111 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
               <tbody className="divide-y divide-gray-50">
                 {order.items.map((item) => {
                   const isEditing = editingItemId === item.id;
-                  const g = item.product.gramsPerUnit;
-                  const yieldPacks = g && item.product.unit === "kg"
+                  const g = item.product?.gramsPerUnit;
+                  const yieldPacks = g && item.product?.unit === "kg"
                     ? Math.floor((item.quantity * 1000) / g)
                     : null;
-                  const filteredProducts = editingProductSearch.trim()
+
+                  // Filtered lists: only show items when search string >= 2 chars, else show up to 50
+                  const filteredProducts = editingProductSearch.trim().length >= 2
                     ? allProducts.filter((p) => {
                         const q = editingProductSearch.toLowerCase();
                         return p.name.toLowerCase().includes(q) || (p.nameVi ?? "").toLowerCase().includes(q);
                       })
-                    : allProducts;
+                    : allProducts.slice(0, 50);
+
+                  const filteredGroups = editingGroupSearch.trim().length >= 2
+                    ? allGroups.filter((g) => g.name.toLowerCase().includes(editingGroupSearch.toLowerCase()))
+                    : allGroups;
+
                   return (
                     <tr key={item.id} className={isEditing ? "bg-indigo-50/50" : ""}>
                       <td className="py-2.5">
                         {isEditing ? (
                           <div className="space-y-1">
-                            <Input
-                              placeholder="🔍 Tìm sản phẩm..."
-                              className="h-7 text-xs"
-                              value={editingProductSearch}
-                              onChange={(e) => setEditingProductSearch(e.target.value)}
-                            />
-                            <select
-                              className="w-full rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs"
-                              value={editingProductId}
-                              onChange={(e) => setEditingProductId(e.target.value)}
-                            >
-                              <option value="">— {filteredProducts.length} sản phẩm —</option>
-                              {filteredProducts.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.nameVi ? `${p.nameVi} — ${p.name.slice(0, 35)}` : p.name} · {p.unit}
-                                  {p.gramsPerUnit ? ` (${p.gramsPerUnit}g/gói)` : ""}
-                                </option>
-                              ))}
-                            </select>
+                            {/* Mode toggle */}
+                            <div className="flex gap-1 mb-1">
+                              <button
+                                className={`text-xs px-2 py-0.5 rounded border ${editingMode === "sku" ? "bg-indigo-100 border-indigo-300 text-indigo-700" : "border-gray-200 text-gray-500"}`}
+                                onClick={() => setEditingMode("sku")}
+                              >SKU cụ thể</button>
+                              <button
+                                className={`text-xs px-2 py-0.5 rounded border ${editingMode === "group" ? "bg-purple-100 border-purple-300 text-purple-700" : "border-gray-200 text-gray-500"}`}
+                                onClick={() => setEditingMode("group")}
+                              >Theo nhóm</button>
+                            </div>
+                            {editingMode === "sku" ? (
+                              <>
+                                <Input
+                                  placeholder="Tìm sản phẩm (nhập 2+ ký tự)..."
+                                  className="h-7 text-xs"
+                                  value={editingProductSearch}
+                                  onChange={(e) => setEditingProductSearch(e.target.value)}
+                                />
+                                <select
+                                  className="w-full rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs"
+                                  value={editingProductId}
+                                  onChange={(e) => setEditingProductId(e.target.value)}
+                                >
+                                  <option value="">
+                                    {editingProductSearch.trim().length >= 2
+                                      ? `— ${filteredProducts.length} kết quả —`
+                                      : `— Nhập 2+ ký tự để tìm (hiện ${filteredProducts.length}/tổng) —`}
+                                  </option>
+                                  {filteredProducts.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.nameVi ? `${p.nameVi} — ${p.name.slice(0, 35)}` : p.name} · {p.unit}
+                                      {p.gramsPerUnit ? ` (${p.gramsPerUnit}g/gói)` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              </>
+                            ) : (
+                              <>
+                                <Input
+                                  placeholder="Tìm nhóm sản phẩm..."
+                                  className="h-7 text-xs"
+                                  value={editingGroupSearch}
+                                  onChange={(e) => setEditingGroupSearch(e.target.value)}
+                                />
+                                <select
+                                  className="w-full rounded-md border border-purple-300 bg-white px-2 py-1 text-xs"
+                                  value={editingGroupId}
+                                  onChange={(e) => setEditingGroupId(e.target.value)}
+                                >
+                                  <option value="">— {filteredGroups.length} nhóm —</option>
+                                  {filteredGroups.map((g) => (
+                                    <option key={g.id} value={g.id}>
+                                      {g.name} · {g.costUnit}
+                                    </option>
+                                  ))}
+                                </select>
+                              </>
+                            )}
                           </div>
                         ) : (
                           <div>
-                            <a href={`/products/${item.product.id}`} className="font-medium text-gray-900 hover:text-green-600 hover:underline">
-                              {item.product.nameVi || item.product.name}
-                            </a>
-                            {item.product.skuShopify && (
-                              <p className="text-xs text-gray-400 font-mono">SKU: {item.product.skuShopify}</p>
+                            {item.group ? (
+                              <>
+                                <span className="font-medium text-gray-900">{item.group.name}</span>
+                                <Badge className="ml-1.5 text-[10px] bg-purple-100 text-purple-700">Nhóm</Badge>
+                                <p className="text-xs text-gray-400">Mua theo nhóm · {item.group.costUnit}</p>
+                              </>
+                            ) : item.product ? (
+                              <>
+                                <a href={`/products/${item.product.id}`} className="font-medium text-gray-900 hover:text-green-600 hover:underline">
+                                  {item.product.nameVi || item.product.name}
+                                </a>
+                                {item.product.skuShopify && (
+                                  <p className="text-xs text-gray-400 font-mono">SKU: {item.product.skuShopify}</p>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-gray-400 text-xs">Không rõ</span>
                             )}
                             {item.notes && (
                               <p className="mt-0.5 text-xs text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block">
-                                📝 {item.notes}
+                                {item.notes}
                               </p>
                             )}
                           </div>
@@ -374,7 +470,9 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                             onChange={(e) => setEditingQty(e.target.value)}
                           />
                         ) : (
-                          <span className="text-gray-600">{item.quantity} {item.product.unit}</span>
+                          <span className="text-gray-600">
+                            {item.quantity} {item.product?.unit ?? item.group?.costUnit ?? "kg"}
+                          </span>
                         )}
                       </td>
                       <td className="py-2.5 text-right">
@@ -435,35 +533,81 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
 
                 {/* Thêm dòng hàng mới inline */}
                 {addingItem && (() => {
-                  const fp = newItem.productSearch.trim()
+                  const fp = newItem.productSearch.trim().length >= 2
                     ? allProducts.filter((p) => {
                         const q = newItem.productSearch.toLowerCase();
                         return p.name.toLowerCase().includes(q) || (p.nameVi ?? "").toLowerCase().includes(q);
                       })
-                    : allProducts;
+                    : allProducts.slice(0, 50);
+
+                  const fg = newItem.groupSearch.trim().length >= 2
+                    ? allGroups.filter((g) => g.name.toLowerCase().includes(newItem.groupSearch.toLowerCase()))
+                    : allGroups;
+
                   return (
                     <tr className="bg-green-50/60">
                       <td className="py-2 pr-2">
+                        {/* Mode toggle for new item */}
+                        <div className="flex gap-1 mb-1">
+                          <button
+                            className={`text-xs px-2 py-0.5 rounded border ${newItem.mode === "sku" ? "bg-green-100 border-green-300 text-green-700" : "border-gray-200 text-gray-500"}`}
+                            onClick={() => setNewItem((n) => ({ ...n, mode: "sku" }))}
+                          >SKU cụ thể</button>
+                          <button
+                            className={`text-xs px-2 py-0.5 rounded border ${newItem.mode === "group" ? "bg-purple-100 border-purple-300 text-purple-700" : "border-gray-200 text-gray-500"}`}
+                            onClick={() => setNewItem((n) => ({ ...n, mode: "group" }))}
+                          >Theo nhóm</button>
+                        </div>
                         <div className="space-y-1">
-                          <Input
-                            placeholder="🔍 Tìm sản phẩm..."
-                            className="h-7 text-xs"
-                            value={newItem.productSearch}
-                            onChange={(e) => setNewItem((n) => ({ ...n, productSearch: e.target.value }))}
-                            autoFocus
-                          />
-                          <select
-                            className="w-full rounded-md border border-green-300 bg-white px-2 py-1 text-xs"
-                            value={newItem.productId}
-                            onChange={(e) => setNewItem((n) => ({ ...n, productId: e.target.value }))}
-                          >
-                            <option value="">— {fp.length} sản phẩm —</option>
-                            {fp.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.nameVi ? `${p.nameVi} — ${p.name.slice(0, 35)}` : p.name} · {p.unit}
-                              </option>
-                            ))}
-                          </select>
+                          {newItem.mode === "sku" ? (
+                            <>
+                              <Input
+                                placeholder="Tìm sản phẩm (nhập 2+ ký tự)..."
+                                className="h-7 text-xs"
+                                value={newItem.productSearch}
+                                onChange={(e) => setNewItem((n) => ({ ...n, productSearch: e.target.value }))}
+                                autoFocus
+                              />
+                              <select
+                                className="w-full rounded-md border border-green-300 bg-white px-2 py-1 text-xs"
+                                value={newItem.productId}
+                                onChange={(e) => setNewItem((n) => ({ ...n, productId: e.target.value }))}
+                              >
+                                <option value="">
+                                  {newItem.productSearch.trim().length >= 2
+                                    ? `— ${fp.length} kết quả —`
+                                    : `— Nhập 2+ ký tự để tìm (hiện ${fp.length}/tổng) —`}
+                                </option>
+                                {fp.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.nameVi ? `${p.nameVi} — ${p.name.slice(0, 35)}` : p.name} · {p.unit}
+                                  </option>
+                                ))}
+                              </select>
+                            </>
+                          ) : (
+                            <>
+                              <Input
+                                placeholder="Tìm nhóm sản phẩm..."
+                                className="h-7 text-xs"
+                                value={newItem.groupSearch}
+                                onChange={(e) => setNewItem((n) => ({ ...n, groupSearch: e.target.value }))}
+                                autoFocus
+                              />
+                              <select
+                                className="w-full rounded-md border border-purple-300 bg-white px-2 py-1 text-xs"
+                                value={newItem.groupId}
+                                onChange={(e) => setNewItem((n) => ({ ...n, groupId: e.target.value }))}
+                              >
+                                <option value="">— {fg.length} nhóm —</option>
+                                {fg.map((g) => (
+                                  <option key={g.id} value={g.id}>
+                                    {g.name} · {g.costUnit}
+                                  </option>
+                                ))}
+                              </select>
+                            </>
+                          )}
                           <Input
                             placeholder="Ghi chú..."
                             className="h-7 text-xs"
@@ -670,7 +814,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                     <Plus className="mr-1 h-3.5 w-3.5" /> Ghi nhận khách trả
                   </Button>
                   {order.payments.filter((p) => p.direction === "from_customer").length === 0 ? (
-                    <p className="text-sm text-red-400">⚠ Chưa nhận tiền từ khách</p>
+                    <p className="text-sm text-red-400">Chưa nhận tiền từ khách</p>
                   ) : (
                     <div className="space-y-2">
                       {order.payments.filter((p) => p.direction === "from_customer").map((p) => (
@@ -787,8 +931,8 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
           <DialogHeader>
             <DialogTitle>
               {paymentDirection === "to_supplier"
-                ? "🔴 Ghi nhận trả nhà cung cấp"
-                : "🔵 Ghi nhận khách trả lại"}
+                ? "Ghi nhận trả nhà cung cấp"
+                : "Ghi nhận khách trả lại"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">

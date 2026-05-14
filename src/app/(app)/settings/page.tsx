@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RefreshCw, CheckCircle2, Building2 } from "lucide-react";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, string>>({
@@ -17,6 +18,8 @@ export default function SettingsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [brosSyncing, setBrosSyncing] = useState(false);
+  const [brosSyncResult, setBrosSyncResult] = useState<{ syncedRows?: number; totalInDB?: number } | null>(null);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -58,11 +61,27 @@ export default function SettingsPage() {
       const res = await fetch(`/api/sync/shopify?type=${type}`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Lỗi đồng bộ");
-      toast.success(`Đã đồng bộ ${data.count} ${type === "products" ? "sản phẩm" : "đơn hàng"}`);
+      toast.success(`Đã đồng bộ ${data.count ?? ((data.created ?? 0) + (data.updated ?? 0))} ${type === "products" ? "sản phẩm" : "đơn hàng"}`);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Lỗi đồng bộ");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const syncBros = async () => {
+    setBrosSyncing(true);
+    setBrosSyncResult(null);
+    try {
+      const res = await fetch("/api/sync/bros", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Lỗi sync Bros");
+      setBrosSyncResult({ syncedRows: data.syncedRows, totalInDB: data.totalInDB });
+      toast.success(`Đã sync kho Bros: ${data.syncedRows ?? 0} SKU → DB ✓`);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Lỗi sync Bros");
+    } finally {
+      setBrosSyncing(false);
     }
   };
 
@@ -89,8 +108,46 @@ export default function SettingsPage() {
           </div>
         </CardContent>
         <CardFooter className="border-t px-4 py-3 bg-gray-50/50 justify-end">
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleSave} disabled={saving} className="bg-gray-900 hover:bg-gray-800">
             {saving ? "Đang lưu..." : "Lưu"}
+          </Button>
+        </CardFooter>
+      </Card>
+
+      {/* Kho Bros */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-gray-500" />
+            <CardTitle>Kho Bros</CardTitle>
+          </div>
+          <CardDescription>
+            Đọc tồn kho từ Google Sheet kho Bros (public) → lưu vào database.
+            Không cần đăng nhập Google.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-600 space-y-1">
+            <p>• Sheet Bros được đọc qua URL công khai — không cần OAuth</p>
+            <p>• Dữ liệu lưu vào bảng <code className="font-mono text-xs bg-white border rounded px-1">WarehouseStock</code> trong database</p>
+            <p>• Tồn kho hiển thị tự động trên trang Tồn kho & So khớp</p>
+          </div>
+          {brosSyncResult && (
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Đã sync {brosSyncResult.syncedRows} SKU · tổng trong DB: {brosSyncResult.totalInDB} SKU
+            </div>
+          )}
+        </CardContent>
+        <CardFooter className="border-t px-4 py-3 bg-gray-50/50">
+          <Button
+            onClick={syncBros}
+            disabled={brosSyncing}
+            className="w-full gap-2"
+            variant="outline"
+          >
+            <RefreshCw className={`h-4 w-4 ${brosSyncing ? "animate-spin" : ""}`} />
+            {brosSyncing ? "Đang sync kho Bros..." : "Sync kho Bros ngay"}
           </Button>
         </CardFooter>
       </Card>
@@ -145,11 +202,11 @@ export default function SettingsPage() {
             </p>
           </div>
         </CardContent>
-        <CardFooter className="flex justify-between border-t p-4 bg-gray-50/50">
+        <CardFooter className="flex flex-wrap justify-between gap-2 border-t p-4 bg-gray-50/50">
           <div className="flex flex-wrap gap-2">
             <Button
               variant="default"
-              className="bg-green-600 hover:bg-green-700"
+              className="bg-gray-900 hover:bg-gray-800"
               onClick={() => {
                 window.location.href = `/api/auth/shopify?shop=${settings.shopifyStoreDomain || ""}`;
               }}
@@ -157,13 +214,15 @@ export default function SettingsPage() {
               Kết nối Shopify (OAuth)
             </Button>
             <Button variant="outline" onClick={() => syncShopify("products")} disabled={syncing}>
-              {syncing ? "Đang đồng bộ..." : "Đồng bộ Sản phẩm"}
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
+              Sync Sản phẩm
             </Button>
             <Button variant="outline" onClick={() => syncShopify("orders")} disabled={syncing}>
-              {syncing ? "Đang đồng bộ..." : "Đồng bộ Đơn hàng"}
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
+              Sync Đơn hàng
             </Button>
           </div>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleSave} disabled={saving} className="bg-gray-900 hover:bg-gray-800">
             {saving ? "Đang lưu..." : "Lưu"}
           </Button>
         </CardFooter>

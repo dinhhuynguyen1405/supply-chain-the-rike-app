@@ -9,8 +9,13 @@ import {
 } from "@/lib/shopify";
 
 const include = {
-  purchaseOrder: { include: { supplier: true } },
-  items: { include: { product: true, purchaseItem: true } },
+  purchaseOrder: {
+    include: {
+      supplier: true,
+      items: { include: { group: { select: { id: true, name: true, costUnit: true } } } },
+    },
+  },
+  items: { include: { product: true, purchaseItem: { include: { group: true } } } },
   costs: { orderBy: { createdAt: "asc" as const } },
 } as const;
 
@@ -51,6 +56,40 @@ export async function PATCH(
         amountVnd:   Number(c.amountVnd),
         note:        c.note || null,
         purchaseOrderId: c.purchaseOrderId || null,
+      },
+    });
+    const order = await prisma.productionOrder.findUnique({ where: { id }, include });
+    return Response.json(order);
+  }
+
+  // Xóa một ProductionItem đơn lẻ
+  if (body.deleteItemId) {
+    await prisma.productionItem.delete({ where: { id: body.deleteItemId } });
+    const order = await prisma.productionOrder.findUnique({ where: { id }, include });
+    return Response.json(order);
+  }
+
+  // Thêm một ProductionItem mới (dùng khi mua theo nhóm, phân bổ từng SKU)
+  if (body.addItem) {
+    const a = body.addItem as {
+      productId: string;
+      purchaseItemId: string;
+      allocatedQty?: number | null;
+      gramsPerPack?: number | null;
+      piecesPerUnit?: number | null;
+      piecesPerPack?: number | null;
+      plannedQty?: number;
+    };
+    await prisma.productionItem.create({
+      data: {
+        productionOrderId: id,
+        purchaseItemId:    a.purchaseItemId,
+        productId:         a.productId,
+        allocatedQty:      a.allocatedQty != null ? Number(a.allocatedQty) : null,
+        gramsPerPack:      a.gramsPerPack  != null ? Number(a.gramsPerPack)  : null,
+        piecesPerUnit:     a.piecesPerUnit != null ? Number(a.piecesPerUnit) : null,
+        piecesPerPack:     a.piecesPerPack != null ? Number(a.piecesPerPack) : null,
+        plannedQty:        Number(a.plannedQty ?? 0),
       },
     });
     const order = await prisma.productionOrder.findUnique({ where: { id }, include });
@@ -99,8 +138,10 @@ export async function PATCH(
         piecesPerUnit?: number | null;
         piecesPerPack?: number | null;
         plannedQty?: number;
-      }[]).map((item) =>
-        prisma.productionItem.update({
+        productId?: string;
+        allocatedQty?: number | null;
+      }[]).map(async (item) => {
+        const prodItem = await prisma.productionItem.update({
           where: { id: item.id },
           data: {
             actualQty:     item.actualQty    != null ? Number(item.actualQty)    : null,
@@ -109,9 +150,20 @@ export async function PATCH(
             piecesPerUnit: item.piecesPerUnit != null ? Number(item.piecesPerUnit) : null,
             piecesPerPack: item.piecesPerPack != null ? Number(item.piecesPerPack) : null,
             ...(item.plannedQty != null && { plannedQty: Number(item.plannedQty) }),
+            ...(item.productId && { productId: item.productId }),
+            ...("allocatedQty" in item && { allocatedQty: item.allocatedQty != null ? Number(item.allocatedQty) : null }),
           },
-        })
-      )
+          select: { purchaseItemId: true }
+        });
+
+        // Cập nhật luôn phía đơn mua để dữ liệu đồng bộ
+        if (item.productId && prodItem.purchaseItemId) {
+          await prisma.purchaseItem.update({
+            where: { id: prodItem.purchaseItemId },
+            data: { productId: item.productId }
+          });
+        }
+      })
     );
   }
 

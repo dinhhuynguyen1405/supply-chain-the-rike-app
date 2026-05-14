@@ -12,7 +12,12 @@ export async function GET(
     where: { id },
     include: {
       supplier: true,
-      items: { include: { product: true } },
+      items: {
+        include: {
+          product: true,
+          group: { select: { id: true, name: true, costUnit: true } },
+        },
+      },
       payments: { orderBy: { paidAt: "asc" } },
       productionOrder: {
         include: {
@@ -54,20 +59,27 @@ export async function PATCH(
     data: updateData,
     include: {
       supplier: true,
-      items: { include: { product: true } },
+      items: {
+        include: {
+          product: true,
+          group: { select: { id: true, name: true, costUnit: true } },
+        },
+      },
       payments: { orderBy: { paidAt: "asc" } },
     },
   });
 
   triggerSheetSync("purchases");
 
-  // Khi đơn mua chuyển sang "arrived":
-  // → Chỉ tự động tạo lệnh sản xuất nếu purchaseType = "raw_material" (nguyên liệu cần đóng gói)
-  // → KHÔNG tạo cho: wholesale (hàng sỉ đã đóng gói), packaging (bao bì), buy_on_behalf
+  // Khi đơn mua đạt tiêu chuẩn: báo hàng đã về (arrived), loại raw_material (nguyên liệu), không mua hộ
+  const newStatus = body.status ?? order.status;
+  const newPurchaseType = body.purchaseType ?? order.purchaseType;
+  const newIsBuyOnBehalf = body.isBuyOnBehalf ?? order.isBuyOnBehalf;
+
   const needsProduction =
-    body.status === "arrived" &&
-    !order.isBuyOnBehalf &&
-    order.purchaseType === "raw_material";
+    newStatus === "arrived" &&
+    !newIsBuyOnBehalf &&
+    newPurchaseType === "raw_material";
 
   if (needsProduction) {
     const existing = await prisma.productionOrder.findUnique({
@@ -78,6 +90,7 @@ export async function PATCH(
         where: { purchaseOrderId: id },
         include: { product: true },
       });
+      const itemsWithProduct = purchaseItems.filter((pi) => pi.productId != null);
       if (purchaseItems.length > 0) {
         await prisma.productionOrder.create({
           data: {
@@ -85,19 +98,19 @@ export async function PATCH(
             purchaseOrderId: id,
             status: "pending",
             items: {
-              create: purchaseItems.map((pi) => ({
+              create: itemsWithProduct.map((pi) => ({
                 purchaseItemId: pi.id,
-                productId: pi.productId,
-                gramsPerPack:  pi.product.gramsPerUnit,
-                piecesPerUnit: pi.product.piecesPerUnit,
-                piecesPerPack: pi.product.piecesPerPack,
-                plannedQty: calcPlannedQty(
+                productId: pi.productId!,
+                gramsPerPack:  pi.product?.gramsPerUnit ?? null,
+                piecesPerUnit: pi.product?.piecesPerUnit ?? null,
+                piecesPerPack: pi.product?.piecesPerPack ?? null,
+                plannedQty: pi.product ? calcPlannedQty(
                   pi.quantity,
                   pi.product.unit,
                   pi.product.gramsPerUnit,
                   pi.product.piecesPerUnit,
                   pi.product.piecesPerPack,
-                ),
+                ) : 0,
               })),
             },
           },

@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
       restockThreshold: body.restockThreshold != null ? Number(body.restockThreshold) : 10,
       category: body.category || null,
       notes: body.notes || null,
+      groupId: body.groupId || null,
     },
   });
   triggerSheetSync("products");

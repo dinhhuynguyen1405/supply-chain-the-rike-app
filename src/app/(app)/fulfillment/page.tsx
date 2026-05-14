@@ -158,16 +158,6 @@ export default function FulfillmentPage() {
     toast.success("Đã xoá"); load();
   }
 
-  async function syncSheets() {
-    const res = await fetch("/api/sync/sheets", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target: "nhung_orders" }),
-    });
-    const data = await res.json();
-    if (res.ok) toast.success("Đã sync tab Đơn Kho Nhung lên Sheet ✓");
-    else toast.error(data.error ?? "Lỗi sync");
-  }
-
   // Filter
   const filtered = orders.filter((o) => {
     if (filterWh === "all") return o.status !== "done" && o.status !== "cancelled";
@@ -189,9 +179,6 @@ export default function FulfillmentPage() {
           <p className="text-sm text-gray-500">Ưu tiên kho Nhung → kho Bros tự động</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={syncSheets} className="gap-1.5 text-xs border-green-200 text-green-700 hover:bg-green-50">
-            <RefreshCw className="h-3.5 w-3.5" /> Sync Sheet
-          </Button>
           <Button onClick={() => setCreateOpen(true)} className="bg-green-600 hover:bg-green-700 text-white gap-1.5">
             <Plus className="h-4 w-4" /> Tạo lệnh mới
           </Button>
