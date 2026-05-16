@@ -96,6 +96,8 @@ export interface RestockItem {
 
   totalPurchasedRaw: number;
   totalProducedPacks: number;
+  inProductionPacks: number;    // packs in production orders with status "in_production"
+  pendingProductionPacks: number; // packs in production orders with status "pending"
 
   urgency: "critical" | "warning" | "healthy" | "overstocked" | "no_sales" | "unmapped";
   priceUsd: number | null;
@@ -121,6 +123,8 @@ export interface GroupedRestockItem {
   totalStock: number;         // sum across variants
   pipelinePacks: number;      // sum across variants
   effectiveStock: number;     // totalStock + pipelinePacks
+  inProductionPacks: number;    // sum of variants' inProductionPacks
+  pendingProductionPacks: number; // sum of variants' pendingProductionPacks
   hasAnyStock: boolean;
   variantsWithStock: string[];// variant names that have effective stock
 
@@ -510,6 +514,27 @@ export async function GET(req: Request) {
   const productionAgg: Record<string, number> = {};
   for (const pi of productionItems) productionAgg[pi.productId] = (productionAgg[pi.productId] ?? 0) + (pi.actualQty ?? pi.plannedQty ?? 0);
 
+  // Active production: pending or in_production (not yet done/cancelled)
+  const activeProductionItems = await prisma.productionItem.findMany({
+    where: { productionOrder: { status: { in: ["pending", "in_production"] } } },
+    select: {
+      productId: true,
+      plannedQty: true,
+      actualQty: true,
+      productionOrder: { select: { status: true } },
+    },
+  });
+  const inProductionAgg: Record<string, number> = {};
+  const pendingProductionAgg: Record<string, number> = {};
+  for (const pi of activeProductionItems) {
+    const qty = pi.actualQty ?? pi.plannedQty ?? 0;
+    if (pi.productionOrder.status === "in_production") {
+      inProductionAgg[pi.productId] = (inProductionAgg[pi.productId] ?? 0) + qty;
+    } else {
+      pendingProductionAgg[pi.productId] = (pendingProductionAgg[pi.productId] ?? 0) + qty;
+    }
+  }
+
   // 5. Aggregate sales by product.id (or raw SKU if unmapped)
   interface SkuAgg {
     title: string;
@@ -742,6 +767,8 @@ export async function GET(req: Request) {
         urgency, priceUsd: product?.priceUsd ?? null,
         totalPurchasedRaw:  product ? (purchaseAgg[product.id]   ?? 0) : 0,
         totalProducedPacks: product ? (productionAgg[product.id] ?? 0) : 0,
+        inProductionPacks:     product ? (inProductionAgg[product.id]     ?? 0) : 0,
+        pendingProductionPacks: product ? (pendingProductionAgg[product.id] ?? 0) : 0,
         trend: trendAnalysis, packaging, cost, restock,
       });
     }
@@ -751,6 +778,8 @@ export async function GET(req: Request) {
     const groupBrosQty    = variantItems.reduce((s, v) => s + v.brosQty,       0);
     const groupTotalStock = groupNhungQty + groupBrosQty;
     const groupPipeline   = variantItems.reduce((s, v) => s + v.pipelinePacks, 0);
+    const groupInProduction      = variantItems.reduce((s, v) => s + v.inProductionPacks, 0);
+    const groupPendingProduction = variantItems.reduce((s, v) => s + v.pendingProductionPacks, 0);
     const groupEffective  = groupTotalStock + groupPipeline;
 
     const groupTotalSold  = variantItems.reduce((s, v) => s + v.totalSold,   0);
@@ -838,6 +867,8 @@ export async function GET(req: Request) {
       totalStock: groupTotalStock,
       pipelinePacks: groupPipeline,
       effectiveStock: groupEffective,
+      inProductionPacks: groupInProduction,
+      pendingProductionPacks: groupPendingProduction,
       hasAnyStock: groupEffective > 0,
       variantsWithStock,
       firstSale: ga.firstSale.toISOString(),

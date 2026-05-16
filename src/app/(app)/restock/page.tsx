@@ -11,7 +11,7 @@ import {
   ShoppingCart, DollarSign, BarChart3, Clock, ArrowUpRight,
   ChevronDown, ChevronUp, TrendingUp, TrendingDown,
   Truck, Box, ListChecks, Calculator, Minus, DatabaseZap,
-  Layers,
+  Layers, Factory,
 } from "lucide-react";
 import type {
   GroupedRestockItem, RestockItem, RestockResponse, RestockSummary,
@@ -149,6 +149,10 @@ function VariantRow({ v }: { v: RestockItem }) {
       <td className="px-3 py-2">
         <p className="text-sm font-medium text-gray-800">{v.localName ?? v.title}</p>
         <p className="text-[10px] font-mono text-gray-400 mt-0.5">{v.sku}</p>
+        <p className="text-[10px] text-gray-500 mt-0.5">
+          <span className="font-semibold text-gray-700">{v.totalSold}</span> gói đã bán
+          <span className="text-gray-400 ml-1.5">({v.numOrders} đơn)</span>
+        </p>
       </td>
       <td className="px-3 py-2 text-right">
         <span className={`text-sm font-bold tabular-nums ${v.totalStock === 0 ? "text-red-500" : "text-gray-700"}`}>
@@ -156,6 +160,20 @@ function VariantRow({ v }: { v: RestockItem }) {
         </span>
         {v.pipelinePacks > 0 && (
           <span className="text-[10px] text-indigo-500 ml-1 font-medium">+{v.pipelinePacks}</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right">
+        {(v.inProductionPacks > 0 || v.pendingProductionPacks > 0) ? (
+          <div className="text-right">
+            {v.inProductionPacks > 0 && (
+              <span className="text-emerald-700 font-semibold text-xs block">{v.inProductionPacks} đang SX</span>
+            )}
+            {v.pendingProductionPacks > 0 && (
+              <span className="text-indigo-600 text-[10px] block">{v.pendingProductionPacks} chờ SX</span>
+            )}
+          </div>
+        ) : (
+          <span className="text-gray-300 text-xs">—</span>
         )}
       </td>
       <td className="px-3 py-2 text-right text-sm text-indigo-600 font-medium tabular-nums">
@@ -233,6 +251,7 @@ function DetailPanel({ item }: { item: GroupedRestockItem }) {
                   <th className="px-3 py-2 text-left">Tình trạng</th>
                   <th className="px-3 py-2 text-left min-w-[160px]">Sản phẩm / SKU</th>
                   <th className="px-3 py-2 text-right">Tồn kho</th>
+                  <th className="px-3 py-2 text-right text-emerald-600">Đang SX</th>
                   <th className="px-3 py-2 text-right">Tốc độ</th>
                   <th className="px-3 py-2 text-right">Còn dùng</th>
                   <th className="px-3 py-2 text-right text-emerald-700 bg-emerald-50/50">Cần mua</th>
@@ -244,6 +263,27 @@ function DetailPanel({ item }: { item: GroupedRestockItem }) {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Production status + link */}
+      {(item.inProductionPacks > 0 || item.pendingProductionPacks > 0) && (
+        <div className="flex items-center gap-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3">
+          <Factory className="h-4 w-4 text-emerald-600 shrink-0" />
+          <div className="flex-1 text-sm">
+            <span className="font-semibold text-emerald-800">Đang sản xuất: </span>
+            {item.inProductionPacks > 0 && (
+              <span className="text-emerald-700 font-bold">{item.inProductionPacks} gói đang SX</span>
+            )}
+            {item.inProductionPacks > 0 && item.pendingProductionPacks > 0 && <span className="text-gray-400 mx-1">·</span>}
+            {item.pendingProductionPacks > 0 && (
+              <span className="text-indigo-600 font-semibold">{item.pendingProductionPacks} gói chờ SX</span>
+            )}
+            <span className="text-emerald-600 ml-2 text-xs">(đã tính vào tồn kho hiệu dụng)</span>
+          </div>
+          <Link href="/production" className="text-xs text-emerald-700 border border-emerald-300 rounded px-2 py-1 hover:bg-emerald-100 transition-colors shrink-0 flex items-center gap-1">
+            <Factory className="h-3 w-3" /> Xem sản xuất →
+          </Link>
         </div>
       )}
 
@@ -321,6 +361,17 @@ function DetailPanel({ item }: { item: GroupedRestockItem }) {
             <p className="text-xs text-gray-400 italic">{restock.recommendation}</p>
           )}
         </div>
+      </div>
+
+      {/* Link to production page */}
+      <div className="flex justify-end">
+        <Link
+          href="/production"
+          className="inline-flex items-center gap-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+        >
+          <Factory className="h-3 w-3" />
+          Xem tất cả đơn sản xuất →
+        </Link>
       </div>
     </div>
   );
@@ -418,9 +469,8 @@ function ShoppingListCard({ list }: { list: ShoppingListGroup[] }) {
                                   <span className="font-bold text-indigo-700">{it.pipelinePacks != null ? fmt(it.pipelinePacks) : "—"}</span>
                                   {(it.totalProducedPacks || it.totalPurchasedRaw) ? (
                                     <span className="text-[9px] text-indigo-500/80 font-medium">
-                                      {it.totalProducedPacks ? `SX: ${fmt(it.totalProducedPacks)}` : ""}
-                                      {it.totalProducedPacks && it.totalPurchasedRaw ? " | " : ""}
-                                      {it.totalPurchasedRaw ? `Mua: ${fmt(it.totalPurchasedRaw)}` : ""}
+                                      {it.totalProducedPacks ? `Đã SX: ${fmt(it.totalProducedPacks)} gói` : ""}
+                                      {it.totalPurchasedRaw ? ` · Đã mua: ${fmt(it.totalPurchasedRaw)}` : ""}
                                     </span>
                                   ) : null}
                                 </div>
