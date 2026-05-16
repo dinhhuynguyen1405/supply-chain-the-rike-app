@@ -151,6 +151,26 @@ export interface GroupedRestockItem {
 
   // Individual variants for detail view
   variants: RestockItem[];
+
+  // Purchase orders liên kết với group này (non-cancelled, gần nhất)
+  linkedPurchases: LinkedPurchaseInfo[];
+}
+
+export interface LinkedPurchaseInfo {
+  id: string;
+  status: string;
+  supplierName: string | null;
+  totalVnd: number;
+  /** Tổng đã trả cho nhà cung cấp (to_supplier payments) */
+  paidToSupplierVnd: number;
+  /** Tổng đã nhận từ Nhung / khách mua hộ (from_customer payments) */
+  receivedFromCustomerVnd: number;
+  rawQty: number;
+  rawUnit: string | null;
+  /** Số gói đã sản xuất từ đơn mua này */
+  producedPacks: number;
+  productionStatus: string | null;
+  createdAt: string;
 }
 
 export interface ShoppingListGroup {
@@ -535,6 +555,88 @@ export async function GET(req: Request) {
     }
   }
 
+  // ── Linked purchase orders (non-cancelled) + payments ────────────────────────
+  const allGroupIds   = allGroups.map(g => g.id);
+  const allProductIds = products.map(p => p.id);
+
+  const linkedPOs = await prisma.purchaseOrder.findMany({
+    where: {
+      status: { notIn: ["cancelled"] },
+      OR: [
+        { items: { some: { groupId:   { in: allGroupIds   } } } },
+        { items: { some: { productId: { in: allProductIds } } } },
+      ],
+    },
+    select: {
+      id: true, status: true, totalVnd: true, createdAt: true,
+      supplier: { select: { name: true } },
+      payments: { select: { direction: true, amount: true } },
+      items: {
+        select: {
+          groupId: true, productId: true, quantity: true,
+          group: { select: { costUnit: true } },
+        },
+      },
+      productionOrder: {
+        select: {
+          status: true,
+          items: { select: { actualQty: true, plannedQty: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Build map: groupKey → LinkedPurchaseInfo[]
+  const pOsByGroupKey = new Map<string, LinkedPurchaseInfo[]>();
+  for (const po of linkedPOs) {
+    // Payment sums
+    const paidToSupplier      = po.payments.filter(p => p.direction === "to_supplier").reduce((s, p) => s + p.amount, 0);
+    const receivedFromCustomer = po.payments.filter(p => p.direction === "from_customer").reduce((s, p) => s + p.amount, 0);
+    // Production packs
+    const producedPacks = po.productionOrder?.items.reduce((s, pi) => s + (pi.actualQty ?? pi.plannedQty ?? 0), 0) ?? 0;
+
+    // Aggregate qty per group/product key
+    const keyQty: Record<string, { qty: number; unit: string | null }> = {};
+    for (const item of po.items) {
+      const key = item.groupId ?? item.productId ?? null;
+      if (!key) continue;
+      if (!keyQty[key]) keyQty[key] = { qty: 0, unit: item.group?.costUnit ?? null };
+      keyQty[key].qty += item.quantity;
+    }
+
+    for (const [key, { qty, unit }] of Object.entries(keyQty)) {
+      if (!pOsByGroupKey.has(key)) pOsByGroupKey.set(key, []);
+      pOsByGroupKey.get(key)!.push({
+        id: po.id,
+        status: po.status,
+        supplierName:            po.supplier?.name ?? null,
+        totalVnd:                po.totalVnd,
+        paidToSupplierVnd:       Math.round(paidToSupplier),
+        receivedFromCustomerVnd: Math.round(receivedFromCustomer),
+        rawQty: qty,
+        rawUnit: unit,
+        producedPacks,
+        productionStatus: po.productionOrder?.status ?? null,
+        createdAt: po.createdAt.toISOString(),
+      });
+    }
+  }
+
+  function getLinkedPurchases(groupKey: string, variants: { product: typeof products[0] | null }[]): LinkedPurchaseInfo[] {
+    let pos = pOsByGroupKey.get(groupKey) ?? [];
+    if (pos.length === 0) {
+      const seen = new Set<string>();
+      for (const gv of variants) {
+        if (!gv.product?.id) continue;
+        for (const p of (pOsByGroupKey.get(gv.product.id) ?? [])) {
+          if (!seen.has(p.id)) { seen.add(p.id); pos = [...pos, p]; }
+        }
+      }
+    }
+    return pos.slice(0, 5);
+  }
+
   // 5. Aggregate sales by product.id (or raw SKU if unmapped)
   interface SkuAgg {
     title: string;
@@ -884,6 +986,7 @@ export async function GET(req: Request) {
       totalEstimatedCostVnd,
       restock: groupRestock,
       variants: variantItems,
+      linkedPurchases: getLinkedPurchases(ga.groupId ?? ga.id, ga.variants),
     });
   }
 

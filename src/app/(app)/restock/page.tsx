@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import type {
   GroupedRestockItem, RestockItem, RestockResponse, RestockSummary,
-  ShoppingListGroup, MonthlyData, TrendAnalysis,
+  ShoppingListGroup, MonthlyData, TrendAnalysis, LinkedPurchaseInfo,
 } from "@/app/api/analytics/restock/route";
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -104,6 +104,50 @@ function TrendBadge({ t }: { t: TrendAnalysis }) {
     <span className="flex items-center gap-0.5 text-[10px] text-gray-500 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">
       <Minus className="h-2.5 w-2.5" /> Ổn định
     </span>
+  );
+}
+
+// ── Purchase status helpers ───────────────────────────────────────────────────
+
+const PO_STATUS: Record<string, { label: string; color: string }> = {
+  draft:      { label: "Nháp",       color: "bg-gray-100 text-gray-600" },
+  confirmed:  { label: "Đã xác nhận", color: "bg-blue-100 text-blue-700" },
+  in_transit: { label: "Đang về",    color: "bg-amber-100 text-amber-700" },
+  packing:    { label: "Đang đóng",  color: "bg-orange-100 text-orange-700" },
+  arrived:    { label: "Đã về",      color: "bg-green-100 text-green-700" },
+  done:       { label: "Hoàn tất",   color: "bg-emerald-100 text-emerald-700" },
+};
+
+function PurchaseStatusCell({ purchases }: { purchases: LinkedPurchaseInfo[] }) {
+  if (!purchases.length) return <span className="text-gray-300 text-xs">—</span>;
+  const latest = purchases[0];
+  const cfg = PO_STATUS[latest.status] ?? { label: latest.status, color: "bg-gray-100 text-gray-600" };
+  return (
+    <div className="space-y-1">
+      <Link href={`/purchases/${latest.id}`}
+        className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold ${cfg.color} hover:opacity-80`}
+        onClick={e => e.stopPropagation()}>
+        {cfg.label}
+      </Link>
+      {latest.receivedFromCustomerVnd > 0 && (
+        <p className="text-[10px] text-emerald-700 font-medium">
+          ↓ nhận: {fmtM(latest.receivedFromCustomerVnd)} ₫
+        </p>
+      )}
+      {latest.paidToSupplierVnd > 0 && (
+        <p className="text-[10px] text-orange-600">
+          ↑ trả: {fmtM(latest.paidToSupplierVnd)} ₫
+        </p>
+      )}
+      {latest.producedPacks > 0 && (
+        <p className="text-[10px] text-indigo-600">
+          SX: {latest.producedPacks} gói
+        </p>
+      )}
+      {purchases.length > 1 && (
+        <p className="text-[10px] text-gray-400">+{purchases.length - 1} đơn khác</p>
+      )}
+    </div>
   );
 }
 
@@ -753,121 +797,91 @@ export default function RestockPage() {
           <div className="py-20 text-center text-gray-400">Không có sản phẩm phù hợp</div>
         ) : (
           <>
-            {/* Column headers */}
-            <div className="hidden md:grid gap-2 items-center bg-gray-50 px-4 py-2.5 border-b border-gray-200 text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
-              style={{ gridTemplateColumns: "1fr 120px 90px 90px 100px 130px 130px 28px" }}>
-              <span>Nhóm sản phẩm · xu hướng</span>
-              <span className="text-indigo-500 text-right">Tốc độ · dự báo</span>
-              <span className="text-right">Đã bán</span>
-              <span className="text-green-600 text-right">Doanh thu</span>
-              <span className="text-orange-500 text-right">Tồn kho</span>
-              <span className="text-center">Còn dùng</span>
-              <span className="text-center">Khuyến nghị</span>
+            {/* Column headers — 9 columns */}
+            {/* Grid: name | giá mua | tốc độ | tồn | cần mua | đã nhận | thanh toán | xác nhận | ▼ */}
+            <div className="hidden md:grid gap-1.5 items-center bg-gray-50 px-4 py-2.5 border-b border-gray-200 text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
+              style={{ gridTemplateColumns: "1fr 88px 78px 85px 105px 110px 105px 80px 28px" }}>
+              <span>Nguyên liệu / Nhóm · xu hướng</span>
+              <span className="text-right text-orange-500">Giá mua</span>
+              <span className="text-right text-indigo-500">Tốc độ</span>
+              <span className="text-right text-orange-400">Tồn kho</span>
+              <span className="text-center text-emerald-600">Cần mua</span>
+              <span className="text-center text-emerald-700">Đã nhận từ Nhung</span>
+              <span className="text-center">Thanh toán / Đơn mua</span>
+              <span className="text-center">Xác nhận mua</span>
               <span />
             </div>
 
             {filtered.map(item => {
-              const cfg   = URGENCY[item.urgency];
+              const cfg    = URGENCY[item.urgency];
               const isOpen = expanded.has(item.id);
-              const multiVariant = item.variants.length > 1;
 
               return (
                 <div key={item.id} className={`border-b border-gray-100 last:border-0 ${cfg.row}`}>
-                  {/* Main row */}
+
+                  {/* ── GROUP HEADER ROW (desktop) ── */}
                   <div
-                    className="hidden md:grid gap-2 items-center px-4 py-3 hover:bg-black/[.02] transition-colors cursor-pointer"
-                    style={{ gridTemplateColumns: "1fr 120px 90px 90px 100px 130px 130px 28px" }}
+                    className="hidden md:grid gap-1.5 items-start px-4 py-3 hover:bg-black/[.02] transition-colors cursor-pointer"
+                    style={{ gridTemplateColumns: "1fr 88px 78px 85px 105px 110px 105px 80px 28px" }}
                     onClick={() => toggleExpand(item.id)}
                   >
-                    {/* Name + trend */}
+                    {/* Col 1: Name + trend + urgency */}
                     <div className="min-w-0">
                       <div className="flex items-start gap-2">
                         <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${cfg.dot}`} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <p className="font-semibold text-gray-900 text-sm truncate">{item.name}</p>
-                            {multiVariant && (
+                            {item.variants.length > 1 && (
                               <span className="flex items-center gap-0.5 text-[10px] text-indigo-500 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5 shrink-0">
-                                <Layers className="h-2.5 w-2.5" /> {item.variants.length} mã
+                                <Layers className="h-2.5 w-2.5" /> {item.variants.length} SKU
                               </span>
                             )}
                           </div>
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            {/* Stock coverage indicator */}
-                            {item.hasAnyStock && (item.urgency === "critical" || item.urgency === "warning") && (
-                              <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 font-medium">
-                                Đang có hàng ({item.variantsWithStock.length} mã)
-                              </span>
-                            )}
-                            {item.cost.groupName && !item.hasAnyStock && (
-                              <span className="text-[10px] text-indigo-400 bg-indigo-50 rounded px-1.5 py-0.5">{item.cost.groupName}</span>
-                            )}
                             <TrendBadge t={item.trend} />
                           </div>
-                          {/* Variant SKUs preview (when collapsed) */}
-                          {multiVariant && !isOpen && (
-                            <div className="flex items-center gap-1 mt-1 flex-wrap">
-                              {item.variants.slice(0, 4).map(v => (
-                                <span key={v.sku} className={`text-[9px] font-mono px-1 rounded border ${v.effectiveStock > 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-gray-100 border-gray-200 text-gray-400"}`}>
-                                  {v.sku}
-                                </span>
-                              ))}
-                              {item.variants.length > 4 && (
-                                <span className="text-[9px] text-gray-400">+{item.variants.length - 4} mã khác</span>
-                              )}
-                            </div>
-                          )}
                         </div>
                       </div>
                     </div>
 
-                    {/* Velocity + forecast */}
+                    {/* Col 2: Giá mua */}
+                    <div className="text-right">
+                      {item.cost.baseCostVnd != null ? (
+                        <>
+                          <p className="text-sm font-bold text-orange-700">{fmtM(item.cost.baseCostVnd)} ₫</p>
+                          <p className="text-[10px] text-gray-400">/{item.cost.costUnit ?? "kg"}</p>
+                          {item.cost.costPerPack != null && (
+                            <p className="text-[10px] text-orange-500">{fmt(item.cost.costPerPack)} ₫/gói</p>
+                          )}
+                        </>
+                      ) : <span className="text-gray-300 text-xs">—</span>}
+                    </div>
+
+                    {/* Col 3: Tốc độ */}
                     <div className="text-right">
                       <p className="font-bold text-indigo-700 text-sm tabular-nums">
                         {item.trend.recentVelocity >= 10 ? Math.round(item.trend.recentVelocity) : item.trend.recentVelocity}
-                        <span className="text-[10px] font-normal text-gray-400">/tháng</span>
+                        <span className="text-[10px] font-normal text-gray-400">/th</span>
                       </p>
-                      <p className="text-[10px] text-purple-500 font-medium">dự báo: {item.trend.forecastNext1M}</p>
-                      <p className="text-[10px] text-gray-400">3T: {item.trend.forecastNext3M}</p>
+                      <p className="text-[10px] text-purple-500">db: {item.trend.forecastNext1M}</p>
                     </div>
 
-                    {/* Total sold */}
-                    <div className="text-right">
-                      <p className="font-semibold text-gray-700 tabular-nums">{item.totalSold}</p>
-                      <p className="text-[10px] text-gray-400">{item.numOrders} đơn</p>
-                      <p className="text-[10px] text-gray-300">{item.trend.numMonths}T dữ liệu</p>
-                    </div>
-
-                    {/* Revenue */}
-                    <div className="text-right">
-                      <p className="font-semibold text-green-700">${item.revenueUsd.toLocaleString()}</p>
-                    </div>
-
-                    {/* Stock (group aggregate) */}
+                    {/* Col 4: Tồn kho tổng */}
                     <div className="text-right">
                       <p className={`text-base font-bold tabular-nums ${item.effectiveStock === 0 ? "text-red-500" : item.effectiveStock <= 10 ? "text-amber-600" : "text-gray-700"}`}>
                         {item.effectiveStock}
                       </p>
-                      {item.nhungQty > 0 && <p className="text-[10px] text-orange-500">VN:{item.nhungQty}</p>}
-                      {item.brosQty  > 0 && <p className="text-[10px] text-purple-500">US:{item.brosQty}</p>}
+                      {item.nhungQty  > 0 && <p className="text-[10px] text-orange-500">VN:{item.nhungQty}</p>}
+                      {item.brosQty   > 0 && <p className="text-[10px] text-purple-500">US:{item.brosQty}</p>}
                       {item.pipelinePacks > 0 && <p className="text-[10px] text-indigo-500">→{item.pipelinePacks}</p>}
                     </div>
 
-                    {/* Days left */}
-                    <div className="text-center">
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${cfg.bg} ${cfg.color}`}>
-                        {item.effectiveStock === 0 && item.soldPerMonth > 0 ? "Hết hàng"
-                          : item.daysLeft == null ? "—"
-                          : item.daysLeft < 30 ? `${item.daysLeft} ngày`
-                          : `${(item.daysLeft / 30).toFixed(1)} tháng`}
-                      </span>
-                    </div>
-
-                    {/* Recommendation */}
+                    {/* Col 5: Cần mua (raw amount) */}
                     <div className="text-center">
                       {item.totalSuggestedPacks > 0 ? (
-                        <div className="text-emerald-700 text-xs font-medium leading-snug">
-                          <p className="font-semibold">
+                        <div className="text-emerald-700 leading-snug">
+                          <p className="text-sm font-bold">
                             {item.restock.suggestedRawAmount != null
                               ? fmtRaw(item.restock.suggestedRawAmount, item.restock.suggestedRawUnit)
                               : `${item.totalSuggestedPacks} gói`}
@@ -875,38 +889,164 @@ export default function RestockPage() {
                           {item.restock.suggestedRawAmount != null && (
                             <p className="text-[10px] text-gray-400">~{item.totalSuggestedPacks} gói</p>
                           )}
+                          {item.totalEstimatedCostVnd != null && (
+                            <p className="text-[10px] text-orange-600 font-medium">{fmtM(Math.round(item.totalEstimatedCostVnd))} ₫</p>
+                          )}
                         </div>
                       ) : (
-                        <Badge className={`text-xs ${cfg.bg} ${cfg.color} border ${cfg.border}`}>{cfg.label}</Badge>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${cfg.bg} ${cfg.color}`}>
+                          {item.daysLeft == null ? cfg.label
+                            : item.daysLeft < 30 ? `${item.daysLeft} ngày`
+                            : `${(item.daysLeft / 30).toFixed(1)} tháng`}
+                        </span>
                       )}
                     </div>
 
-                    {/* Toggle */}
-                    <div className="text-gray-400">
+                    {/* Col 6: Đã nhận từ Nhung (from_customer payments) */}
+                    <div className="text-center">
+                      {item.linkedPurchases.length > 0 && item.linkedPurchases.some(p => p.receivedFromCustomerVnd > 0) ? (
+                        <div>
+                          {item.linkedPurchases.filter(p => p.receivedFromCustomerVnd > 0).slice(0, 2).map(po => (
+                            <div key={po.id} className="mb-1">
+                              <p className="text-sm font-bold text-emerald-700">{fmtM(po.receivedFromCustomerVnd)} ₫</p>
+                              <p className="text-[10px] text-gray-400">{new Date(po.createdAt).toLocaleDateString("vi-VN")}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : <span className="text-gray-300 text-xs">—</span>}
+                    </div>
+
+                    {/* Col 7: Thanh toán / Đơn mua */}
+                    <div className="text-center" onClick={e => e.stopPropagation()}>
+                      <PurchaseStatusCell purchases={item.linkedPurchases} />
+                    </div>
+
+                    {/* Col 8: Xác nhận mua */}
+                    <div className="text-center" onClick={e => e.stopPropagation()}>
+                      {item.totalSuggestedPacks > 0 || item.urgency === "critical" || item.urgency === "warning" ? (
+                        <Link href="/purchases"
+                          className="inline-flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1 rounded font-medium transition-colors">
+                          <ShoppingCart className="h-3 w-3" />
+                          Tạo đơn
+                        </Link>
+                      ) : <span className="text-gray-300 text-xs">—</span>}
+                    </div>
+
+                    {/* Col 9: Toggle (analysis panel) */}
+                    <div className="text-gray-400 self-center">
                       {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </div>
                   </div>
 
-                  {/* Mobile row */}
+                  {/* ── SKU SUB-ROWS — luôn hiển thị, không cần expand ── */}
+                  <div className="hidden md:block border-t border-gray-100/80 bg-white/40">
+                    {item.variants.map((v, vi) => {
+                      const vcfg = URGENCY[v.urgency];
+                      return (
+                        <div key={v.sku}
+                          className={`grid gap-1.5 items-center px-4 py-2 text-xs hover:bg-gray-50/60 transition-colors ${vi < item.variants.length - 1 ? "border-b border-gray-100/60" : ""}`}
+                          style={{ gridTemplateColumns: "1fr 88px 78px 85px 105px 110px 105px 80px 28px" }}
+                        >
+                          {/* Col 1: SKU + name + urgency */}
+                          <div className="pl-7 flex items-center gap-2 min-w-0">
+                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${vcfg.dot}`} />
+                            <span className="font-mono text-[10px] bg-gray-100 border border-gray-200 text-gray-500 px-1.5 py-0.5 rounded shrink-0 max-w-[80px] truncate">
+                              {v.sku}
+                            </span>
+                            <span className="text-gray-700 font-medium truncate">{v.localName ?? v.title}</span>
+                          </div>
+                          {/* Col 2: Đã bán */}
+                          <div className="text-right">
+                            <span className="font-semibold text-gray-800">{v.totalSold}</span>
+                            <span className="text-gray-400 ml-0.5">gói</span>
+                            <p className="text-[10px] text-gray-400">{v.numOrders} đơn</p>
+                          </div>
+                          {/* Col 3: Velocity */}
+                          <div className="text-right">
+                            <span className="text-indigo-600 font-semibold">{v.trend.recentVelocity}</span>
+                            <span className="text-gray-400">/th</span>
+                          </div>
+                          {/* Col 4: Tồn kho */}
+                          <div className="text-right">
+                            <span className={`font-bold ${v.totalStock === 0 ? "text-red-500" : "text-gray-700"}`}>
+                              {v.totalStock}
+                            </span>
+                            {v.pipelinePacks > 0 && (
+                              <span className="text-indigo-500 text-[10px] ml-0.5">+{v.pipelinePacks}</span>
+                            )}
+                            {v.nhungQty > 0 && <p className="text-[10px] text-orange-500">VN:{v.nhungQty}</p>}
+                            {v.brosQty  > 0 && <p className="text-[10px] text-purple-500">US:{v.brosQty}</p>}
+                          </div>
+                          {/* Col 5: Còn dùng + suggested */}
+                          <div className="text-center">
+                            {v.daysLeft != null ? (
+                              <span className={`font-semibold ${v.daysLeft <= 14 ? "text-red-600" : v.daysLeft <= 90 ? "text-amber-600" : "text-gray-600"}`}>
+                                {v.daysLeft < 30 ? `${v.daysLeft} ngày` : `${(v.daysLeft / 30).toFixed(1)} tháng`}
+                              </span>
+                            ) : <span className="text-gray-300">—</span>}
+                            {v.restock.suggestedPacks > 0 && (
+                              <p className="text-[10px] text-emerald-700 font-semibold">→ {v.restock.suggestedPacks} gói</p>
+                            )}
+                          </div>
+                          {/* Col 6: Đang SX / đã SX */}
+                          <div className="text-center">
+                            {(v.inProductionPacks > 0 || v.pendingProductionPacks > 0 || v.totalProducedPacks > 0) ? (
+                              <div>
+                                {v.inProductionPacks > 0 && (
+                                  <p className="text-emerald-700 font-semibold">{v.inProductionPacks} đang SX</p>
+                                )}
+                                {v.pendingProductionPacks > 0 && (
+                                  <p className="text-indigo-600">{v.pendingProductionPacks} chờ SX</p>
+                                )}
+                                {v.totalProducedPacks > 0 && (
+                                  <p className="text-gray-400 text-[10px]">đã SX: {v.totalProducedPacks}</p>
+                                )}
+                              </div>
+                            ) : <span className="text-gray-300">—</span>}
+                          </div>
+                          {/* Cols 7-9: empty (purchase columns are group-level) */}
+                          <div /><div /><div />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* ── Mobile row ── */}
                   <div className="md:hidden flex items-start gap-3 px-4 py-3 cursor-pointer" onClick={() => toggleExpand(item.id)}>
                     <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${cfg.dot}`} />
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-sm text-gray-900 truncate">{item.name}</p>
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-500">
-                        {multiVariant && <span className="text-indigo-500">{item.variants.length} mã</span>}
+                        <span className="text-indigo-500">{item.variants.length} SKU</span>
                         <span className="text-indigo-600 font-medium">{item.trend.recentVelocity}/tháng</span>
-                        <span>· còn {item.daysLeft ?? "—"} ngày</span>
                         {item.totalSuggestedPacks > 0 && (
                           <span className="text-emerald-600 font-medium">
                             → {fmtRaw(item.restock.suggestedRawAmount, item.restock.suggestedRawUnit) ?? `${item.totalSuggestedPacks} gói`}
                           </span>
                         )}
                       </div>
+                      {/* Mobile: show all SKUs */}
+                      <div className="mt-1.5 space-y-1">
+                        {item.variants.map(v => {
+                          const vcfg = URGENCY[v.urgency];
+                          return (
+                            <div key={v.sku} className="flex items-center gap-2 text-xs">
+                              <span className={`h-1.5 w-1.5 rounded-full ${vcfg.dot}`} />
+                              <span className="font-mono text-[10px] text-gray-500">{v.sku}</span>
+                              <span className="text-gray-700 truncate flex-1">{v.localName ?? v.title}</span>
+                              <span className="text-gray-500 shrink-0">{v.totalSold} gói</span>
+                              {v.restock.suggestedPacks > 0 && (
+                                <span className="text-emerald-600 font-medium shrink-0">→ {v.restock.suggestedPacks}</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                     {isOpen ? <ChevronUp className="h-4 w-4 text-gray-400 shrink-0 mt-1" /> : <ChevronDown className="h-4 w-4 text-gray-400 shrink-0 mt-1" />}
                   </div>
 
-                  {/* Detail panel */}
+                  {/* ── Analysis panel (expand để xem chart + chi tiết) ── */}
                   {isOpen && <DetailPanel item={item} />}
                 </div>
               );
