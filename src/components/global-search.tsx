@@ -14,7 +14,7 @@ import {
   LayoutDashboard, ShoppingCart, TrendingUp, Package,
   Users, Boxes, ShoppingBag, Truck, ClipboardList,
   Wallet, Search, Settings, Factory, BarChart3,
-  GitCompareArrows, Building2, Link2,
+  Building2, Link2,
 } from "lucide-react";
 
 interface SearchResult {
@@ -33,7 +33,6 @@ const PAGES = [
   { href: "/production", label: "Sản xuất & Đóng gói", icon: Factory },
   { href: "/shipments", label: "Lô vận chuyển", icon: Truck },
   { href: "/inventory", label: "Tồn kho", icon: Boxes },
-  { href: "/reconciliation", label: "So khớp tồn kho", icon: GitCompareArrows },
   { href: "/fulfillment", label: "Lệnh đóng hàng", icon: ClipboardList },
   { href: "/products", label: "Sản phẩm", icon: Package },
   { href: "/suppliers", label: "Nhà cung cấp", icon: Users },
