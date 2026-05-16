@@ -125,6 +125,7 @@ export interface GroupedRestockItem {
   effectiveStock: number;     // totalStock + pipelinePacks
   inProductionPacks: number;    // sum of variants' inProductionPacks
   pendingProductionPacks: number; // sum of variants' pendingProductionPacks
+  totalProducedPacks: number;    // sum of variants' totalProducedPacks (all-time, including done)
   hasAnyStock: boolean;
   variantsWithStock: string[];// variant names that have effective stock
 
@@ -580,7 +581,8 @@ export async function GET(req: Request) {
       productionOrder: {
         select: {
           status: true,
-          items: { select: { actualQty: true, plannedQty: true } },
+          // include productId so we can filter per-product produced packs
+          items: { select: { productId: true, actualQty: true, plannedQty: true } },
         },
       },
     },
@@ -593,8 +595,6 @@ export async function GET(req: Request) {
     // Payment sums
     const paidToSupplier      = po.payments.filter(p => p.direction === "to_supplier").reduce((s, p) => s + p.amount, 0);
     const receivedFromCustomer = po.payments.filter(p => p.direction === "from_customer").reduce((s, p) => s + p.amount, 0);
-    // Production packs
-    const producedPacks = po.productionOrder?.items.reduce((s, pi) => s + (pi.actualQty ?? pi.plannedQty ?? 0), 0) ?? 0;
 
     // Aggregate qty per group/product key
     const keyQty: Record<string, { qty: number; unit: string | null }> = {};
@@ -605,7 +605,21 @@ export async function GET(req: Request) {
       keyQty[key].qty += item.quantity;
     }
 
+    const allGroupIdSet = new Set(allGroupIds);
+
     for (const [key, { qty, unit }] of Object.entries(keyQty)) {
+      // producedPacks: filter by productId if key is a productId;
+      // if key is a groupId, sum all production items in the PO.
+      let producedPacks = 0;
+      if (po.productionOrder) {
+        const isGroupKey = allGroupIdSet.has(key);
+        producedPacks = isGroupKey
+          ? po.productionOrder.items.reduce((s, pi) => s + (pi.actualQty ?? pi.plannedQty ?? 0), 0)
+          : po.productionOrder.items
+              .filter(pi => pi.productId === key)
+              .reduce((s, pi) => s + (pi.actualQty ?? pi.plannedQty ?? 0), 0);
+      }
+
       if (!pOsByGroupKey.has(key)) pOsByGroupKey.set(key, []);
       pOsByGroupKey.get(key)!.push({
         id: po.id,
@@ -882,6 +896,7 @@ export async function GET(req: Request) {
     const groupPipeline   = variantItems.reduce((s, v) => s + v.pipelinePacks, 0);
     const groupInProduction      = variantItems.reduce((s, v) => s + v.inProductionPacks, 0);
     const groupPendingProduction = variantItems.reduce((s, v) => s + v.pendingProductionPacks, 0);
+    const groupTotalProduced     = variantItems.reduce((s, v) => s + v.totalProducedPacks, 0);
     const groupEffective  = groupTotalStock + groupPipeline;
 
     const groupTotalSold  = variantItems.reduce((s, v) => s + v.totalSold,   0);
@@ -971,6 +986,7 @@ export async function GET(req: Request) {
       effectiveStock: groupEffective,
       inProductionPacks: groupInProduction,
       pendingProductionPacks: groupPendingProduction,
+      totalProducedPacks: groupTotalProduced,
       hasAnyStock: groupEffective > 0,
       variantsWithStock,
       firstSale: ga.firstSale.toISOString(),

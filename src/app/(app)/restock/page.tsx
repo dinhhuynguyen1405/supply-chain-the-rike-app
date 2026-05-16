@@ -122,27 +122,24 @@ function PurchaseStatusCell({ purchases }: { purchases: LinkedPurchaseInfo[] }) 
   if (!purchases.length) return <span className="text-gray-300 text-xs">—</span>;
   const latest = purchases[0];
   const cfg = PO_STATUS[latest.status] ?? { label: latest.status, color: "bg-gray-100 text-gray-600" };
+  // Total paidToSupplier across all linked POs
+  const totalPaid = purchases.reduce((s, p) => s + p.paidToSupplierVnd, 0);
+  const totalReceived = purchases.reduce((s, p) => s + p.receivedFromCustomerVnd, 0);
   return (
-    <div className="space-y-1">
+    <div className="space-y-0.5">
       <Link href={`/purchases/${latest.id}`}
         className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold ${cfg.color} hover:opacity-80`}
         onClick={e => e.stopPropagation()}>
         {cfg.label}
       </Link>
-      {latest.receivedFromCustomerVnd > 0 && (
-        <p className="text-[10px] text-emerald-700 font-medium">
-          ↓ nhận: {fmtM(latest.receivedFromCustomerVnd)} ₫
-        </p>
+      {totalReceived > 0 && (
+        <p className="text-[10px] text-emerald-700 font-medium">↓ nhận: {fmtM(totalReceived)} ₫</p>
       )}
-      {latest.paidToSupplierVnd > 0 && (
-        <p className="text-[10px] text-orange-600">
-          ↑ trả: {fmtM(latest.paidToSupplierVnd)} ₫
-        </p>
+      {totalPaid > 0 && (
+        <p className="text-[10px] text-orange-600">↑ trả: {fmtM(totalPaid)} ₫</p>
       )}
-      {latest.producedPacks > 0 && (
-        <p className="text-[10px] text-indigo-600">
-          SX: {latest.producedPacks} gói
-        </p>
+      {latest.rawQty > 0 && (
+        <p className="text-[10px] text-gray-500">{latest.rawQty} {latest.rawUnit ?? "đv"} NL</p>
       )}
       {purchases.length > 1 && (
         <p className="text-[10px] text-gray-400">+{purchases.length - 1} đơn khác</p>
@@ -806,7 +803,7 @@ export default function RestockPage() {
               <span className="text-right text-indigo-500">Tốc độ</span>
               <span className="text-right text-orange-400">Tồn kho</span>
               <span className="text-center text-emerald-600">Cần mua</span>
-              <span className="text-center text-emerald-700">Đã nhận từ Nhung</span>
+              <span className="text-center text-emerald-700">Sản xuất</span>
               <span className="text-center">Thanh toán / Đơn mua</span>
               <span className="text-center">Xác nhận mua</span>
               <span />
@@ -902,18 +899,29 @@ export default function RestockPage() {
                       )}
                     </div>
 
-                    {/* Col 6: Đã nhận từ Nhung (from_customer payments) */}
-                    <div className="text-center">
-                      {item.linkedPurchases.length > 0 && item.linkedPurchases.some(p => p.receivedFromCustomerVnd > 0) ? (
-                        <div>
-                          {item.linkedPurchases.filter(p => p.receivedFromCustomerVnd > 0).slice(0, 2).map(po => (
-                            <div key={po.id} className="mb-1">
-                              <p className="text-sm font-bold text-emerald-700">{fmtM(po.receivedFromCustomerVnd)} ₫</p>
-                              <p className="text-[10px] text-gray-400">{new Date(po.createdAt).toLocaleDateString("vi-VN")}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : <span className="text-gray-300 text-xs">—</span>}
+                    {/* Col 6: Sản xuất (active + done) + nhận từ Nhung nếu có */}
+                    <div className="text-center space-y-0.5">
+                      {item.inProductionPacks > 0 && (
+                        <p className="text-xs font-bold text-emerald-700">{item.inProductionPacks} đang SX</p>
+                      )}
+                      {item.pendingProductionPacks > 0 && (
+                        <p className="text-xs font-semibold text-indigo-600">{item.pendingProductionPacks} chờ SX</p>
+                      )}
+                      {item.totalProducedPacks > 0 && item.inProductionPacks === 0 && item.pendingProductionPacks === 0 && (
+                        <p className="text-[10px] text-gray-500">đã SX: {item.totalProducedPacks} gói</p>
+                      )}
+                      {item.totalProducedPacks > 0 && (item.inProductionPacks > 0 || item.pendingProductionPacks > 0) && (
+                        <p className="text-[10px] text-gray-400">đã SX: {item.totalProducedPacks}</p>
+                      )}
+                      {item.linkedPurchases.some(p => p.receivedFromCustomerVnd > 0) && (
+                        <p className="text-[10px] text-emerald-700 font-bold">
+                          ↓ {fmtM(item.linkedPurchases.reduce((s, p) => s + p.receivedFromCustomerVnd, 0))} ₫
+                        </p>
+                      )}
+                      {item.inProductionPacks === 0 && item.pendingProductionPacks === 0 && item.totalProducedPacks === 0 &&
+                       !item.linkedPurchases.some(p => p.receivedFromCustomerVnd > 0) && (
+                        <span className="text-gray-300 text-xs">—</span>
+                      )}
                     </div>
 
                     {/* Col 7: Thanh toán / Đơn mua */}
