@@ -19,7 +19,7 @@ import {
   Upload, Sparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { suggestSku } from "@/lib/sku-suggest";
+import { suggestSku, suggestSkuFromGroup } from "@/lib/sku-suggest";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -160,6 +160,24 @@ export default function ProductsPage() {
   // skuLocked = true when user has manually typed in the SKU field
   const [skuLocked, setSkuLocked] = useState(false);
 
+  /** Compute the auto-suggested SKU based on current form state */
+  function computeAutoSku(
+    overrides: Partial<{ groupId: string; gramsPerUnit: string; piecesPerPack: string; name: string; nameVi: string }> = {}
+  ): string {
+    const gId    = overrides.groupId    ?? formGroupId;
+    const grams  = overrides.gramsPerUnit  ?? form.gramsPerUnit;
+    const pieces = overrides.piecesPerPack ?? form.piecesPerPack;
+    const name   = overrides.name  ?? form.name;
+    const nameVi = overrides.nameVi ?? form.nameVi;
+
+    if (gId) {
+      const grp = groups.find(g => g.id === gId);
+      if (grp) return suggestSkuFromGroup(grp.name, grams || null, pieces || null);
+    }
+    // Fallback: product name-based
+    return suggestSku(name, nameVi || null);
+  }
+
   // Exchange rate for cost calculation
   const [usdToVnd, setUsdToVnd] = useState(25500);
   useEffect(() => {
@@ -273,6 +291,21 @@ export default function ProductsPage() {
     await fetch(`/api/product-groups/${id}`, { method: "DELETE" });
     toast.success("Đã xoá nhóm");
     loadGroups();
+  }
+
+  async function deleteProduct(id: string, name: string) {
+    if (!confirm(`Xoá sản phẩm "${name}"?\nThao tác này không thể hoàn tác.`)) return;
+    const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
+    if (res.status === 204) {
+      toast.success("Đã xoá sản phẩm");
+      load();
+      loadGroups();
+    } else if (res.status === 409) {
+      const data = await res.json();
+      toast.error(data.error ?? "Sản phẩm có dữ liệu liên quan, không thể xoá");
+    } else {
+      toast.error("Lỗi xoá sản phẩm");
+    }
   }
 
   async function runAutoGroup() {
@@ -524,10 +557,18 @@ export default function ProductsPage() {
           {/* Remove from group */}
           <button
             onClick={() => assignToGroup(p.id, null)}
-            className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 transition-all"
+            className="p-1 rounded hover:bg-orange-50 text-gray-300 hover:text-orange-500 transition-all"
             title="Gỡ khỏi nhóm"
           >
             <X className="h-3.5 w-3.5" />
+          </button>
+          {/* Delete product */}
+          <button
+            onClick={() => deleteProduct(p.id, p.nameVi ?? p.name)}
+            className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-600 transition-all"
+            title="Xoá sản phẩm"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
@@ -583,6 +624,16 @@ export default function ProductsPage() {
               className="text-[10px] text-gray-400 hover:text-green-600 border border-dashed border-gray-300 hover:border-green-400 rounded px-2 py-1 transition-all flex items-center gap-1"
             >
               <Tag className="h-2.5 w-2.5" /> Gán nhóm
+            </button>
+          )}
+          {/* Delete product */}
+          {!isAssigning && (
+            <button
+              onClick={() => deleteProduct(p.id, p.nameVi ?? p.name)}
+              className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-600 transition-all"
+              title="Xoá sản phẩm"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
@@ -835,7 +886,7 @@ export default function ProductsPage() {
                 onChange={(e) => {
                   const newName = e.target.value;
                   const sku = !editing && !skuLocked
-                    ? suggestSku(newName, form.nameVi || null)
+                    ? computeAutoSku({ name: newName })
                     : form.skuShopify;
                   setForm(prev => ({ ...prev, name: newName, skuShopify: sku }));
                 }}
@@ -849,7 +900,7 @@ export default function ProductsPage() {
                 onChange={(e) => {
                   const newVi = e.target.value;
                   const sku = !editing && !skuLocked
-                    ? suggestSku(form.name, newVi || null)
+                    ? computeAutoSku({ nameVi: newVi })
                     : form.skuShopify;
                   setForm(prev => ({ ...prev, nameVi: newVi, skuShopify: sku }));
                 }}
@@ -862,7 +913,14 @@ export default function ProductsPage() {
               <select
                 className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
                 value={formGroupId}
-                onChange={e => setFormGroupId(e.target.value)}
+                onChange={e => {
+                  const newGid = e.target.value;
+                  setFormGroupId(newGid);
+                  if (!editing && !skuLocked) {
+                    const sku = computeAutoSku({ groupId: newGid });
+                    setForm(prev => ({ ...prev, skuShopify: sku }));
+                  }
+                }}
               >
                 <option value="">— Không thuộc nhóm —</option>
                 {groups.map(g => (
@@ -886,7 +944,7 @@ export default function ProductsPage() {
                           type="button"
                           onClick={() => {
                             setSkuLocked(false);
-                            setForm(prev => ({ ...prev, skuShopify: suggestSku(prev.name, prev.nameVi || null) }));
+                            setForm(prev => ({ ...prev, skuShopify: computeAutoSku() }));
                           }}
                           className="flex items-center gap-1 text-[10px] text-purple-600 hover:text-purple-700 font-medium"
                         >
@@ -894,7 +952,8 @@ export default function ProductsPage() {
                         </button>
                       ) : (
                         <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
-                          <Sparkles className="h-2.5 w-2.5" /> Tự động
+                          <Sparkles className="h-2.5 w-2.5" />
+                          {formGroupId ? "Từ nhóm NL" : "Tự động"}
                         </span>
                       )
                     )}
@@ -910,7 +969,9 @@ export default function ProductsPage() {
                   />
                   {!editing && !skuLocked && form.skuShopify && (
                     <p className="text-[10px] text-emerald-600">
-                      ✓ SKU được sinh tự động theo tên · Chỉnh sửa bên trên để thay đổi
+                      ✓ {formGroupId
+                        ? "SKU sinh từ nhóm NL + ngày + gram · Chỉnh tay để khoá"
+                        : "SKU sinh tự động theo tên · Chọn nhóm NL để sinh chuẩn hơn"}
                     </p>
                   )}
                 </div>
@@ -931,7 +992,21 @@ export default function ProductsPage() {
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Đóng gói theo trọng lượng</p>
               <div className="space-y-1.5">
                 <Label className="text-xs">Gram / gói bán</Label>
-                <Input type="number" placeholder="VD: 200" value={form.gramsPerUnit} onChange={f("gramsPerUnit")} />
+                <Input
+                  type="number"
+                  placeholder="VD: 200"
+                  value={form.gramsPerUnit}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setForm(prev => {
+                      const next = { ...prev, gramsPerUnit: v };
+                      if (!editing && !skuLocked) {
+                        next.skuShopify = computeAutoSku({ gramsPerUnit: v, piecesPerPack: "" });
+                      }
+                      return next;
+                    });
+                  }}
+                />
                 <p className="text-xs text-gray-400">VD: 200 → 1kg mua được 5 gói 200g</p>
               </div>
             </div>
@@ -947,7 +1022,21 @@ export default function ProductsPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Số hạt / gói bán</Label>
-                  <Input type="number" placeholder="VD: 150" value={form.piecesPerPack} onChange={f("piecesPerPack")} />
+                  <Input
+                    type="number"
+                    placeholder="VD: 150"
+                    value={form.piecesPerPack}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setForm(prev => {
+                        const next = { ...prev, piecesPerPack: v };
+                        if (!editing && !skuLocked && !prev.gramsPerUnit) {
+                          next.skuShopify = computeAutoSku({ piecesPerPack: v });
+                        }
+                        return next;
+                      });
+                    }}
+                  />
                   <p className="text-xs text-gray-400">1 gói = ? hạt</p>
                 </div>
               </div>

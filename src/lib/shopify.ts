@@ -49,15 +49,23 @@ export async function getShopifyConfig(): Promise<ShopifyConfig | null> {
     (acc, s) => ({ ...acc, [s.key]: s.value }),
     {} as Record<string, string>
   );
+
+  // Domain: env var takes priority over DB (DB may have stale/wrong value)
   const domainRaw =
-    cfg.shopifyStoreDomain || process.env.SHOPIFY_STORE_DOMAIN;
+    process.env.SHOPIFY_STORE_DOMAIN ||
+    cfg.shopifyStoreDomain;
   const domain = domainRaw
     ?.replace(/^https?:\/\//, "")
     .replace(/\/$/, "");
+
+  // Access token: SHOPIFY_ACCESS_TOKEN env var is the canonical source;
+  // fall back to DB shopifyAccessToken, then other env vars
   const accessToken =
-    cfg.shopifyAccessToken ||
+    process.env.SHOPIFY_ACCESS_TOKEN ||   // atkn_* token from .env (highest priority)
+    cfg.shopifyAccessToken ||              // DB setting (may be stale)
     cfg.shopifyApiSecret ||
     process.env.SHOPIFY_API_SECRET;
+
   if (!domain || !accessToken) return null;
   return { domain, accessToken };
 }

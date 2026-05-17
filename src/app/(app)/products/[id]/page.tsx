@@ -41,11 +41,120 @@ interface Product {
   nameVi: string | null;
   skuShopify: string | null;
   skuTiktok: string | null;
+  skuAmz: string | null;
+  skuBros: string | null;
   unit: string;
   gramsPerUnit: number | null;
   category: string | null;
   labelImageUrl: string | null;
   labelDriveUrl: string | null;
+}
+
+// ── BarcodeCard: always shows SKU + barcode, even for products without any SKU ──
+function BarcodeCard({ product, onReload }: { product: Product; onReload: () => void }) {
+  const [customSku, setCustomSku] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Derive best available SKU for barcode generation
+  const activeSku =
+    product.skuShopify ??
+    product.skuTiktok ??
+    product.skuAmz ??
+    product.skuBros ??
+    null;
+
+  async function saveSkuShopify() {
+    const val = customSku.trim().toUpperCase();
+    if (!val) return;
+    setSaving(true);
+    const res = await fetch(`/api/products/${product.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skuShopify: val }),
+    });
+    setSaving(false);
+    if (res.ok) { onReload(); setCustomSku(""); }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="grid gap-6 sm:grid-cols-2">
+        {/* SKU list */}
+        <div className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">SKU</p>
+
+          {product.skuShopify && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+              <p className="text-[10px] text-gray-400 mb-0.5">Shopify</p>
+              <p className="font-mono text-sm font-semibold text-gray-800">{product.skuShopify}</p>
+            </div>
+          )}
+          {product.skuTiktok && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+              <p className="text-[10px] text-gray-400 mb-0.5">TikTok</p>
+              <p className="font-mono text-sm font-semibold text-gray-800">{product.skuTiktok}</p>
+            </div>
+          )}
+          {product.skuAmz && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+              <p className="text-[10px] text-gray-400 mb-0.5">Amazon ASIN</p>
+              <p className="font-mono text-sm font-semibold text-gray-800">{product.skuAmz}</p>
+            </div>
+          )}
+          {product.skuBros && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+              <p className="text-[10px] text-gray-400 mb-0.5">Bros Warehouse</p>
+              <p className="font-mono text-sm font-semibold text-gray-800">{product.skuBros}</p>
+            </div>
+          )}
+
+          {/* Nếu chưa có skuShopify → cho phép nhập nhanh */}
+          {!product.skuShopify && (
+            <div className="space-y-1.5 pt-1">
+              <p className="text-[10px] text-amber-600 font-medium">Chưa có SKU Shopify — nhập để tạo barcode</p>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="VD: GRA-0001-200G"
+                  value={customSku}
+                  onChange={(e) => setCustomSku(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveSkuShopify(); }}
+                  className="flex-1 h-7 rounded-md border border-amber-300 bg-amber-50 px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-400"
+                />
+                <button
+                  onClick={saveSkuShopify}
+                  disabled={saving || !customSku.trim()}
+                  className="h-7 px-2 rounded-md bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium disabled:opacity-50"
+                >
+                  {saving ? "..." : "Lưu"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Barcode / QR generator */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Barcode / QR</p>
+          {activeSku ? (
+            <BarcodeGenerator
+              sku={activeSku}
+              label={product.nameVi ?? product.name}
+            />
+          ) : customSku.trim() ? (
+            <BarcodeGenerator
+              sku={customSku.trim().toUpperCase()}
+              label={product.nameVi ?? product.name}
+            />
+          ) : (
+            <div className="flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50 min-h-[120px]">
+              <p className="text-xs text-gray-400 text-center px-4">Nhập SKU bên trái để tạo barcode</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 export default function ProductHistoryPage({
@@ -164,42 +273,8 @@ export default function ProductHistoryPage({
         )}
       </div>
 
-      {/* SKU + Barcode */}
-      {(product.skuShopify || product.skuTiktok) && (
-        <Card className="p-5">
-          <div className="grid gap-6 sm:grid-cols-2">
-            {/* SKU list */}
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">SKU</p>
-              {product.skuShopify && (
-                <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
-                  <div>
-                    <p className="text-[10px] text-gray-400 mb-0.5">Shopify</p>
-                    <p className="font-mono text-sm font-semibold text-gray-800">{product.skuShopify}</p>
-                  </div>
-                </div>
-              )}
-              {product.skuTiktok && (
-                <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
-                  <div>
-                    <p className="text-[10px] text-gray-400 mb-0.5">TikTok</p>
-                    <p className="font-mono text-sm font-semibold text-gray-800">{product.skuTiktok}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Barcode / QR generator */}
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Barcode / QR</p>
-              <BarcodeGenerator
-                sku={product.skuShopify ?? product.skuTiktok ?? ""}
-                label={product.nameVi ?? product.name}
-              />
-            </div>
-          </div>
-        </Card>
-      )}
+      {/* SKU + Barcode — always visible */}
+      <BarcodeCard product={product} onReload={loadProduct} />
 
       {/* Label Card */}
       <Card className="p-5">

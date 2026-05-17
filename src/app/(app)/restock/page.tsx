@@ -11,11 +11,11 @@ import {
   ShoppingCart, DollarSign, BarChart3, Clock, ArrowUpRight,
   ChevronDown, ChevronUp, TrendingUp, TrendingDown,
   Truck, Box, ListChecks, Calculator, Minus, DatabaseZap,
-  Layers, Factory,
+  Layers, Factory, CheckCircle2,
 } from "lucide-react";
 import type {
   GroupedRestockItem, RestockItem, RestockResponse, RestockSummary,
-  ShoppingListGroup, MonthlyData, TrendAnalysis, LinkedPurchaseInfo,
+  MonthlyData, TrendAnalysis, LinkedPurchaseInfo,
 } from "@/app/api/analytics/restock/route";
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -418,136 +418,6 @@ function DetailPanel({ item }: { item: GroupedRestockItem }) {
   );
 }
 
-// ── Shopping list card ────────────────────────────────────────────────────────
-
-function ShoppingListCard({ list }: { list: ShoppingListGroup[] }) {
-  const [collapsed, setCollapsed] = useState(false);
-  if (!list.length) return null;
-  const totalCost  = list.reduce((s, g) => s + (g.totalCostVnd ?? 0), 0);
-  const totalPacks = list.reduce((s, g) => s + g.items.reduce((acc, i) => acc + i.suggestedPacks, 0), 0);
-
-  return (
-    <div className="rounded-xl shadow-sm border border-emerald-200 bg-white overflow-hidden mb-6">
-      <button
-        className="w-full relative overflow-hidden flex items-center justify-between px-6 py-5 bg-gradient-to-r from-emerald-50 via-teal-50/50 to-white hover:bg-emerald-100/50 transition-all border-b border-emerald-100"
-        onClick={() => setCollapsed(c => !c)}
-      >
-        <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500" />
-        <div className="flex items-center gap-4">
-          <div className="rounded-full bg-emerald-100 p-2.5 shadow-sm">
-            <ListChecks className="h-5 w-5 text-emerald-700" />
-          </div>
-          <div className="text-left">
-            <p className="font-bold text-lg text-emerald-900">Danh Sách Cần Mua (Shopping List)</p>
-            <p className="text-sm text-emerald-600/80 font-medium mt-0.5">
-              <span className="text-emerald-700 font-bold">{list.length}</span> nhóm NL thô ·{" "}
-              <span className="text-emerald-700 font-bold">{totalPacks.toLocaleString()}</span> gói cần mua/đóng
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-6">
-          {totalCost > 0 && (
-            <div className="text-right">
-              <p className="text-[11px] font-bold text-emerald-600/70 uppercase tracking-widest mb-1">TỔNG CHI PHÍ ƯỚC TÍNH</p>
-              <p className="text-2xl font-black text-orange-600 tracking-tight drop-shadow-sm">{totalCost >= 1_000_000 ? fmtM(totalCost) : fmt(totalCost)} ₫</p>
-            </div>
-          )}
-          <div className="bg-white rounded-full p-1.5 shadow-sm border border-gray-100">
-            {collapsed ? <ChevronDown className="h-5 w-5 text-emerald-600" /> : <ChevronUp className="h-5 w-5 text-emerald-600" />}
-          </div>
-        </div>
-      </button>
-
-      {!collapsed && (
-        <div className="divide-y divide-gray-100 bg-gray-50/40">
-          {list.map((group) => (
-            <div key={group.groupName} className="p-6 hover:bg-white transition-colors group">
-              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                <div className="flex-1 w-full overflow-x-auto">
-                  <div className="flex items-center gap-3 mb-4">
-                    <h3 className="text-base font-bold text-gray-900 group-hover:text-emerald-800 transition-colors uppercase tracking-wide">{group.groupName}</h3>
-                    {group.totalRawAmount != null && group.rawUnit && (
-                      <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 font-bold px-3 py-1 border border-emerald-200 shadow-sm text-sm">
-                        CẦN MUA: {fmtRaw(group.totalRawAmount, group.rawUnit)}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
-                    <table className="w-full text-sm text-left whitespace-nowrap">
-                      <thead className="bg-gray-100/80 text-gray-600 uppercase text-[10px] font-bold tracking-wider border-b border-gray-200">
-                        <tr>
-                          <th className="px-4 py-3">Phân Loại</th>
-                          <th className="px-4 py-3 min-w-[200px]">SKU / Sản Phẩm</th>
-                          <th className="px-4 py-3 text-right">Tồn VN/US</th>
-                          <th className="px-4 py-3 text-right text-indigo-700 bg-indigo-50/50">Hàng Đang Về</th>
-                          <th className="px-4 py-3 text-right">Dự Báo (3T)</th>
-                          <th className="px-4 py-3 text-right text-emerald-700 bg-emerald-50/50">Cần Đóng/Mua</th>
-                          <th className="px-4 py-3 text-right">Chi Phí</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {group.items.map((it) => {
-                          const cfg = URGENCY[it.urgency];
-                          return (
-                            <tr key={it.sku} className="hover:bg-gray-50/50 transition-colors">
-                              <td className="px-4 py-3">
-                                <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold border ${cfg.bg} ${cfg.color} ${cfg.border || "border-transparent"}`}>
-                                  <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-                                  {cfg.label}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="font-semibold text-gray-900 truncate max-w-[200px]">{it.localName}</div>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <span className="text-[10px] text-gray-500 font-mono bg-gray-100 px-1.5 rounded">{it.sku}</span>
-                                  {it.trend === "growing" && <span className="text-emerald-600 flex items-center gap-0.5 text-[10px] font-bold bg-emerald-50 px-1 rounded"><TrendingUp className="h-3 w-3" /> tăng</span>}
-                                  {it.trend === "declining" && <span className="text-red-500 flex items-center gap-0.5 text-[10px] font-bold bg-red-50 px-1 rounded"><TrendingDown className="h-3 w-3" /> giảm</span>}
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-right font-medium text-gray-600">{it.totalStock != null ? fmt(it.totalStock) : "—"}</td>
-                              <td className="px-4 py-3 text-right bg-indigo-50/20">
-                                <div className="flex flex-col items-end">
-                                  <span className="font-bold text-indigo-700">{it.pipelinePacks != null ? fmt(it.pipelinePacks) : "—"}</span>
-                                  {(it.totalProducedPacks || it.totalPurchasedRaw) ? (
-                                    <span className="text-[9px] text-indigo-500/80 font-medium">
-                                      {it.totalProducedPacks ? `Đã SX: ${fmt(it.totalProducedPacks)} gói` : ""}
-                                      {it.totalPurchasedRaw ? ` · Đã mua: ${fmt(it.totalPurchasedRaw)}` : ""}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-right font-medium text-gray-600">{fmt(it.forecastNext3M)}</td>
-                              <td className="px-4 py-3 text-right bg-emerald-50/20">
-                                <span className="inline-flex items-center justify-center font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded min-w-[50px] border border-emerald-200">
-                                  {it.suggestedPacks}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-right">
-                                {it.estimatedCostVnd != null ? (
-                                  <span className="font-semibold text-orange-600">{fmt(Math.round(it.estimatedCostVnd))} ₫</span>
-                                ) : <span className="text-gray-400">—</span>}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                {group.totalCostVnd != null && (
-                  <div className="md:w-36 shrink-0 md:text-right md:border-l border-t md:border-t-0 border-gray-200 pt-4 md:pt-0 pl-0 md:pl-5 mt-4 md:mt-0 flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center">
-                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider bg-gray-100 px-2 py-1 rounded inline-block mb-2">Chi phí nhóm</p>
-                    <p className="text-xl font-black text-orange-600 tabular-nums drop-shadow-sm">{fmt(Math.round(group.totalCostVnd))} ₫</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
@@ -742,9 +612,6 @@ export default function RestockPage() {
           </Card>
         </div>
       )}
-
-      {/* ── Shopping list ── */}
-      {!loading && <ShoppingListCard list={data?.shoppingList ?? []} />}
 
       {/* ── Tabs ── */}
       <div className="flex gap-1 rounded-xl bg-gray-100 p-1 flex-wrap">

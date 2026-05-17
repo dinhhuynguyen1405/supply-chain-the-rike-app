@@ -17,8 +17,18 @@ import { Plus, Eye, Trash2, X, Package, Truck, CheckCircle2, UserPlus, Factory }
 import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils";
 
 interface Product { id: string; name: string; nameVi: string | null; unit: string; }
+interface Group { id: string; name: string; costUnit: string | null; baseCostVnd: number | null; }
 interface Supplier { id: string; name: string; }
-interface OrderItem { productId: string; quantity: number; priceVnd: number; subtotalVnd: number; notes: string; }
+interface OrderItem {
+  mode: "group" | "product";   // group = mua theo nhóm NL, product = mua SKU cụ thể
+  groupId?: string;
+  productId?: string;
+  quantity: number;
+  unit?: string;
+  priceVnd: number;
+  subtotalVnd: number;
+  notes: string;
+}
 
 interface ProductionOrderSummary {
   id: string;
@@ -44,7 +54,7 @@ interface PurchaseOrder {
   shippingCode: string | null;
   shippingUnit: string | null;
   supplier: Supplier;
-  items: { product: { name: string; nameVi: string | null }; quantity: number; priceVnd: number }[];
+  items: { product: { name: string; nameVi: string | null } | null; group?: { name: string } | null; quantity: number; priceVnd: number }[];
   payments: { amount: number; direction: string }[];
   productionOrder: ProductionOrderSummary | null;
 }
@@ -78,6 +88,7 @@ export default function PurchasesPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [open, setOpen] = useState(false);
   const [productSearch, setProductSearch] = useState<Record<number, string>>({});
 
@@ -107,7 +118,7 @@ export default function PurchasesPage() {
     purchaseDestination: "kho_huy",
   });
   const [items, setItems] = useState<OrderItem[]>([
-    { productId: "", quantity: 1, priceVnd: 0, subtotalVnd: 0, notes: "" },
+    { mode: "group", groupId: "", quantity: 1, unit: "kg", priceVnd: 0, subtotalVnd: 0, notes: "" },
   ]);
 
   const load = () =>
@@ -121,15 +132,25 @@ export default function PurchasesPage() {
     fetch("/api/products?limit=5000")
       .then((r) => r.json())
       .then((d) => setProducts(Array.isArray(d) ? d : (d.products ?? [])));
+    fetch("/api/product-groups")
+      .then((r) => r.json())
+      .then((d) => setGroups(Array.isArray(d) ? d.map((g: { id: string; name: string; costUnit: string | null; baseCostVnd: number | null }) => ({ id: g.id, name: g.name, costUnit: g.costUnit, baseCostVnd: g.baseCostVnd })) : []));
   }, []);
 
   function updateItem(idx: number, field: keyof OrderItem, val: string) {
     const next = [...items];
-    const strFields = ["productId", "notes"];
+    const strFields = ["productId", "groupId", "notes", "unit", "mode"];
     const item = { ...next[idx], [field]: strFields.includes(field) ? val : Number(val) };
     item.subtotalVnd = item.quantity * item.priceVnd;
     next[idx] = item;
     setItems(next);
+  }
+
+  function toggleItemMode(idx: number, mode: "group" | "product") {
+    const next = [...items];
+    next[idx] = { ...next[idx], mode, groupId: "", productId: "" };
+    setItems(next);
+    setProductSearch((prev) => ({ ...prev, [idx]: "" }));
   }
 
   async function createSupplierInline() {
@@ -156,7 +177,7 @@ export default function PurchasesPage() {
 
   async function submit() {
     if (!form.supplierId) return toast.error("Chọn nhà cung cấp");
-    if (items.some((i) => !i.productId)) return toast.error("Chọn sản phẩm cho tất cả dòng");
+    if (items.some((i) => !i.groupId && !i.productId)) return toast.error("Chọn nhóm hoặc sản phẩm cho tất cả dòng");
     const res = await fetch("/api/purchases", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -171,7 +192,7 @@ export default function PurchasesPage() {
       toast.success(form.arrivedNow ? "Đã tạo đơn — hàng đã về ✓" : "Đã tạo đơn mua");
       setOpen(false);
       load();
-      setItems([{ productId: "", quantity: 1, priceVnd: 0, subtotalVnd: 0, notes: "" }]);
+      setItems([{ mode: "group", groupId: "", quantity: 1, unit: "kg", priceVnd: 0, subtotalVnd: 0, notes: "" }]);
       setForm({ supplierId: "", orderDate: new Date().toISOString().split("T")[0], expectedDate: "", arrivedDate: new Date().toISOString().split("T")[0], shippingCode: "", shippingUnit: "", shippingCostVnd: "", notes: "", isBuyOnBehalf: false, arrivedNow: false, sellingPriceVnd: "", purchaseType: "raw_material", purchaseDestination: "kho_huy" });
     } else {
       toast.error("Có lỗi xảy ra");
@@ -243,7 +264,7 @@ export default function PurchasesPage() {
                 className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 flex items-center gap-1.5"
               >
                 <Package className="h-3 w-3" />
-                {o.code} · {o.items.map(i => i.product.nameVi ?? i.product.name).join(", ")}
+                {o.code} · {o.items.map(i => i.product ? (i.product.nameVi ?? i.product.name) : (i.group?.name ?? "Nhóm hàng")).join(", ")}
               </button>
             ))}
           </div>
@@ -303,7 +324,9 @@ export default function PurchasesPage() {
                     <td className="px-4 py-3">
                       <p className="font-medium text-gray-900">{o.supplier.name}</p>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        {o.items.slice(0, 3).map(i => i.product.nameVi ?? i.product.name).join(" · ")}
+                        {o.items.slice(0, 3).map(i =>
+                          i.product ? (i.product.nameVi ?? i.product.name) : (i.group?.name ?? "Nhóm hàng")
+                        ).join(" · ")}
                         {o.items.length > 3 && ` +${o.items.length - 3}`}
                       </p>
                       {/* Lệnh sản xuất liên kết */}
@@ -562,7 +585,7 @@ export default function PurchasesPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Danh sách hàng *</Label>
-                <Button type="button" size="sm" variant="outline" onClick={() => setItems([...items, { productId: "", quantity: 1, priceVnd: 0, subtotalVnd: 0, notes: "" }])}>
+                <Button type="button" size="sm" variant="outline" onClick={() => setItems([...items, { mode: "group", groupId: "", quantity: 1, unit: "kg", priceVnd: 0, subtotalVnd: 0, notes: "" }])}>
                   <Plus className="mr-1 h-3 w-3" /> Thêm dòng
                 </Button>
               </div>
@@ -578,36 +601,100 @@ export default function PurchasesPage() {
                         );
                       })
                     : products;
+                  const selectedGroup = item.mode === "group" && item.groupId
+                    ? groups.find((g) => g.id === item.groupId)
+                    : null;
                   return (
                   <div key={idx} className="rounded-lg border border-gray-100 bg-gray-50 p-3 space-y-2">
+                    {/* Mode toggle */}
                     <div className="flex items-center gap-2">
-                      <div className="flex-1 space-y-1">
-                        <Input
-                          placeholder="🔍 Tìm sản phẩm (VD: lá ổi, trà, 100g...)"
-                          className="text-xs h-7 bg-white"
-                          value={search}
-                          onChange={(e) => setProductSearch((prev) => ({ ...prev, [idx]: e.target.value }))}
-                        />
-                        <select
-                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          value={item.productId}
-                          onChange={(e) => updateItem(idx, "productId", e.target.value)}
+                      <div className="flex rounded-md border border-gray-200 overflow-hidden text-xs shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleItemMode(idx, "group")}
+                          className={`px-2.5 py-1 font-medium transition-colors ${item.mode === "group" ? "bg-orange-500 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
                         >
-                          <option value="">— Chọn sản phẩm ({filteredProducts.length} kết quả) —</option>
-                          {filteredProducts.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.nameVi ? `${p.nameVi} (${p.name.substring(0, 40)})` : p.name} · {p.unit}
-                            </option>
-                          ))}
+                          📦 Nhóm NL
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleItemMode(idx, "product")}
+                          className={`px-2.5 py-1 font-medium transition-colors ${item.mode === "product" ? "bg-blue-500 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+                        >
+                          🏷️ SKU
+                        </button>
+                      </div>
+                      <div className="flex-1">
+                        {item.mode === "group" ? (
+                          <select
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            value={item.groupId ?? ""}
+                            onChange={(e) => {
+                              const g = groups.find(g => g.id === e.target.value);
+                              const next = [...items];
+                              next[idx] = {
+                                ...next[idx],
+                                groupId: e.target.value,
+                                unit: g?.costUnit ?? "kg",
+                                priceVnd: g?.baseCostVnd ?? next[idx].priceVnd,
+                                subtotalVnd: next[idx].quantity * (g?.baseCostVnd ?? next[idx].priceVnd),
+                              };
+                              setItems(next);
+                            }}
+                          >
+                            <option value="">— Chọn nhóm nguyên liệu ({groups.length} nhóm) —</option>
+                            {groups.map((g) => (
+                              <option key={g.id} value={g.id}>
+                                {g.name}{g.baseCostVnd ? ` · ${g.baseCostVnd.toLocaleString("vi-VN")}đ/${g.costUnit ?? "kg"}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="space-y-1">
+                            <Input
+                              placeholder="🔍 Tìm SKU sản phẩm..."
+                              className="text-xs h-7 bg-white"
+                              value={search}
+                              onChange={(e) => setProductSearch((prev) => ({ ...prev, [idx]: e.target.value }))}
+                            />
+                            <select
+                              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                              value={item.productId ?? ""}
+                              onChange={(e) => updateItem(idx, "productId", e.target.value)}
+                            >
+                              <option value="">— Chọn SKU ({filteredProducts.length}) —</option>
+                              {filteredProducts.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.nameVi ? `${p.nameVi} (${p.name.substring(0, 40)})` : p.name} · {p.unit}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-1 w-32 shrink-0">
+                        <Input type="number" className="flex-1" placeholder="SL" value={item.quantity || ""} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
+                        <select className="w-14 rounded-md border border-input bg-background px-1 text-xs" value={item.unit || "kg"} onChange={(e) => updateItem(idx, "unit", e.target.value)}>
+                          <option value="kg">kg</option>
+                          <option value="g">gam</option>
+                          <option value="unit">pc</option>
+                          <option value="gói">gói</option>
+                          <option value="bó">bó</option>
+                          <option value="hộp">hộp</option>
                         </select>
                       </div>
-                      <Input type="number" className="w-20" placeholder="SL" value={item.quantity || ""} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
                       <Input type="number" className="w-32" placeholder="Giá/đv (VND)" value={item.priceVnd || ""} onChange={(e) => updateItem(idx, "priceVnd", e.target.value)} />
                       <span className="w-28 shrink-0 text-right text-xs font-semibold text-gray-700">{formatVND(item.subtotalVnd)}</span>
                       <Button type="button" size="icon" variant="ghost" className="shrink-0 text-red-400" onClick={() => setItems(items.filter((_, i) => i !== idx))}>
                         <X className="h-4 w-4" />
                       </Button>
                     </div>
+                    {/* Group hint */}
+                    {item.mode === "group" && selectedGroup && (
+                      <p className="text-[11px] text-orange-600 bg-orange-50 rounded px-2 py-1">
+                        📦 Nhóm <strong>{selectedGroup.name}</strong> — sẽ tạo lệnh sản xuất để phân bổ SKU sau khi hàng về
+                      </p>
+                    )}
                     <Input placeholder="Ghi chú: Hàng Loại 1, đã deal giá..." className="text-xs bg-white" value={item.notes} onChange={(e) => updateItem(idx, "notes", e.target.value)} />
                   </div>
                   );
@@ -657,7 +744,7 @@ export default function PurchasesPage() {
               <div className="rounded-lg bg-gray-50 p-3 text-sm">
                 <p className="font-medium text-gray-900">{packingOrder.code}</p>
                 <p className="text-gray-500 text-xs mt-1">
-                  {packingOrder.items.map(i => `${i.quantity}${packingOrder.items[0] && 'kg'} ${i.product.nameVi ?? i.product.name}`).join(" · ")}
+                  {packingOrder.items.map(i => `${i.quantity}kg ${i.product ? (i.product.nameVi ?? i.product.name) : (i.group?.name ?? "Nhóm hàng")}`).join(" · ")}
                 </p>
               </div>
 

@@ -88,7 +88,7 @@ export async function PATCH(
     if (!existing) {
       const purchaseItems = await prisma.purchaseItem.findMany({
         where: { purchaseOrderId: id },
-        include: { product: true },
+        include: { product: true, group: true },
       });
       const itemsWithProduct = purchaseItems.filter((pi) => pi.productId != null);
       if (purchaseItems.length > 0) {
@@ -106,7 +106,8 @@ export async function PATCH(
                 piecesPerPack: pi.product?.piecesPerPack ?? null,
                 plannedQty: pi.product ? calcPlannedQty(
                   pi.quantity,
-                  pi.product.unit,
+                  // group-based items: dùng costUnit của group (kg) thay vì product.unit (có thể là "unit")
+                  pi.group?.costUnit || pi.unit || pi.product.unit,
                   pi.product.gramsPerUnit,
                   pi.product.piecesPerUnit,
                   pi.product.piecesPerPack,

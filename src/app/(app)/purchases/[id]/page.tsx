@@ -43,6 +43,7 @@ interface Order {
   items: {
     id: string;
     quantity: number;
+    unit: string | null;
     priceVnd: number;
     subtotalVnd: number;
     notes: string | null;
@@ -103,6 +104,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const [editingGroupId, setEditingGroupId] = useState<string>("");
   const [editingMode, setEditingMode] = useState<"sku" | "group">("sku");
   const [editingQty, setEditingQty] = useState<string>("");
+  const [editingUnit, setEditingUnit] = useState<string>("");
   const [editingPrice, setEditingPrice] = useState<string>("");
   const [editingProductSearch, setEditingProductSearch] = useState<string>("");
   const [editingGroupSearch, setEditingGroupSearch] = useState<string>("");
@@ -181,6 +183,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     setEditingGroupId(item.groupId ?? "");
     setEditingMode(item.groupId ? "group" : "sku");
     setEditingQty(String(item.quantity));
+    setEditingUnit(item.unit || item.product?.unit || item.group?.costUnit || "kg");
     setEditingPrice(String(item.priceVnd));
     setEditingProductSearch("");
     setEditingGroupSearch("");
@@ -196,6 +199,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       body.groupId = null;
     }
     if (editingQty) body.quantity = Number(editingQty);
+    if (editingUnit) body.unit = editingUnit;
     if (editingPrice !== "") body.priceVnd = Number(editingPrice);
     const res = await fetch(`/api/purchases/${id}/items`, {
       method: "PATCH",
@@ -255,6 +259,21 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       body: JSON.stringify({ paymentId }),
     });
     if (res.ok) { toast.success("Đã xoá"); load(); }
+  }
+
+  async function createProductionOrderManually() {
+    // Re-trigger arrived → the PATCH route's needsProduction check creates the order if missing
+    const res = await fetch(`/api/purchases/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "arrived" }),
+    });
+    if (res.ok) {
+      toast.success("Đã tạo lệnh sản xuất ✓");
+      load();
+    } else {
+      toast.error("Lỗi tạo lệnh sản xuất");
+    }
   }
 
   if (!order) return (
@@ -665,6 +684,29 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
           </Card>
 
           {/* Lệnh sản xuất / đóng gói */}
+          {/* Case 1: No production order + arrived + raw_material → show create button */}
+          {!order.productionOrder && order.status === "arrived" && !order.isBuyOnBehalf && (
+            <Card className="p-5 border-dashed border-2 border-orange-200 bg-orange-50/40">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Factory className="h-4 w-4 text-orange-600" />
+                  <div>
+                    <p className="text-sm font-semibold text-orange-800">Chưa có lệnh sản xuất</p>
+                    <p className="text-xs text-orange-600">Hàng đã về — cần tạo lệnh để phân bổ SKU và đóng gói</p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={createProductionOrderManually}
+                  className="bg-orange-600 hover:bg-orange-700 text-white shrink-0"
+                >
+                  <Factory className="mr-1.5 h-3.5 w-3.5" />
+                  Tạo lệnh sản xuất
+                </Button>
+              </div>
+            </Card>
+          )}
+
           {order.productionOrder && (
             <Card className={`p-5 border-2 ${
               order.productionOrder.status === "done" ? "border-green-200 bg-green-50/30" :
@@ -682,59 +724,79 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                     {PROD_STATUS_LABELS[order.productionOrder.status] ?? order.productionOrder.status}
                   </Badge>
                   <a
-                    href="/production"
+                    href={`/production/${order.productionOrder.id}`}
                     className="text-xs text-indigo-600 hover:underline"
                   >
-                    Mở trang sản xuất →
+                    Mở lệnh sản xuất →
                   </a>
                 </div>
               </div>
-              <table className="w-full text-sm">
-                <thead className="text-xs text-gray-500 border-b border-gray-200">
-                  <tr>
-                    <th className="pb-2 text-left font-medium">Sản phẩm</th>
-                    <th className="pb-2 text-right font-medium text-amber-600">Dự kiến</th>
-                    <th className="pb-2 text-right font-medium text-green-600">Thực tế</th>
-                    <th className="pb-2 text-right font-medium text-gray-400">Quy cách</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {order.productionOrder.items.map((pi, idx) => (
-                    <tr key={idx}>
-                      <td className="py-2.5 font-medium text-gray-900">
-                        {pi.product.nameVi ?? pi.product.name}
+
+              {/* Case 2: Production order exists but 0 items → guide to add SKUs */}
+              {order.productionOrder.items.length === 0 ? (
+                <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 text-sm">
+                  <p className="font-semibold text-orange-800 mb-1 flex items-center gap-1.5">
+                    <Package className="h-4 w-4" /> Chưa khai báo SKU
+                  </p>
+                  <p className="text-xs text-orange-700 mb-3">
+                    Lệnh sản xuất đã tạo nhưng chưa có sản phẩm nào. Vào trang sản xuất để phân bổ SKU từ nhóm nguyên liệu.
+                  </p>
+                  <a
+                    href={`/production/${order.productionOrder.id}`}
+                    className="inline-flex items-center gap-1.5 text-xs bg-orange-600 text-white rounded px-3 py-1.5 hover:bg-orange-700"
+                  >
+                    <Factory className="h-3.5 w-3.5" />
+                    Vào trang sản xuất để thêm SKU
+                  </a>
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-gray-500 border-b border-gray-200">
+                    <tr>
+                      <th className="pb-2 text-left font-medium">Sản phẩm</th>
+                      <th className="pb-2 text-right font-medium text-amber-600">Dự kiến</th>
+                      <th className="pb-2 text-right font-medium text-green-600">Thực tế</th>
+                      <th className="pb-2 text-right font-medium text-gray-400">Quy cách</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {order.productionOrder.items.map((pi, idx) => (
+                      <tr key={idx}>
+                        <td className="py-2.5 font-medium text-gray-900">
+                          {pi.product.nameVi ?? pi.product.name}
+                        </td>
+                        <td className="py-2.5 text-right">
+                          <span className="font-bold text-amber-700">{Math.round(pi.plannedQty)} gói</span>
+                        </td>
+                        <td className="py-2.5 text-right">
+                          {pi.actualQty != null
+                            ? <span className="font-bold text-green-700">{Math.round(pi.actualQty)} gói</span>
+                            : <span className="text-gray-300">—</span>
+                          }
+                        </td>
+                        <td className="py-2.5 text-right text-xs text-gray-400">
+                          {pi.gramsPerPack ? `${pi.gramsPerPack}g/gói` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t border-gray-200">
+                    <tr>
+                      <td className="pt-2 text-xs text-gray-500">Tổng</td>
+                      <td className="pt-2 text-right font-bold text-amber-700">
+                        {Math.round(order.productionOrder.items.reduce((s, i) => s + i.plannedQty, 0))} gói
                       </td>
-                      <td className="py-2.5 text-right">
-                        <span className="font-bold text-amber-700">{Math.round(pi.plannedQty)} gói</span>
-                      </td>
-                      <td className="py-2.5 text-right">
-                        {pi.actualQty != null
-                          ? <span className="font-bold text-green-700">{Math.round(pi.actualQty)} gói</span>
-                          : <span className="text-gray-300">—</span>
+                      <td className="pt-2 text-right font-bold text-green-700">
+                        {order.productionOrder.items.some(i => i.actualQty != null)
+                          ? `${Math.round(order.productionOrder.items.reduce((s, i) => s + (i.actualQty ?? 0), 0))} gói`
+                          : "—"
                         }
                       </td>
-                      <td className="py-2.5 text-right text-xs text-gray-400">
-                        {pi.gramsPerPack ? `${pi.gramsPerPack}g/gói` : "—"}
-                      </td>
+                      <td />
                     </tr>
-                  ))}
-                </tbody>
-                <tfoot className="border-t border-gray-200">
-                  <tr>
-                    <td className="pt-2 text-xs text-gray-500">Tổng</td>
-                    <td className="pt-2 text-right font-bold text-amber-700">
-                      {Math.round(order.productionOrder.items.reduce((s, i) => s + i.plannedQty, 0))} gói
-                    </td>
-                    <td className="pt-2 text-right font-bold text-green-700">
-                      {order.productionOrder.items.some(i => i.actualQty != null)
-                        ? `${Math.round(order.productionOrder.items.reduce((s, i) => s + (i.actualQty ?? 0), 0))} gói`
-                        : "—"
-                      }
-                    </td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
+                  </tfoot>
+                </table>
+              )}
             </Card>
           )}
 

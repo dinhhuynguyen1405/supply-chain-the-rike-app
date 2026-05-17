@@ -166,6 +166,7 @@ model PurchaseItem {
   groupId         String?
   group           ProductGroup? @relation(fields: [groupId], references: [id])
   quantity        Float
+  unit            String?
   priceVnd        Float
   subtotalVnd     Float
   notes           String?       // Ghi chú per dòng hàng

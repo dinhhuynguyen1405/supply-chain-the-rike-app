@@ -101,9 +101,10 @@ function extractSuffix(name: string): string {
 
 function datePart(date?: Date): string {
   const d = date ?? new Date();
+  const yyyy = String(d.getFullYear());
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
-  return mm + dd; // "0514" for May 14
+  return yyyy + mm + dd; // "20260517" for May 17 2026
 }
 
 // ── Prefix builders ───────────────────────────────────────────────────────────
@@ -185,4 +186,44 @@ export function baseCode(nameVi: string, date?: Date): string {
   const prefix = viPrefix(nameVi);
   if (!prefix) return "";
   return `${prefix}-${datePart(date)}`;
+}
+
+// ── Group-based SKU (new primary format) ─────────────────────────────────────
+
+/**
+ * Sinh SKU theo nhóm nguyên liệu (dạng mới).
+ *
+ * Format: [GROUP_INITIALS]-[MMDD]-[GRAMS]G   (đóng gói theo trọng lượng)
+ *         [GROUP_INITIALS]-[MMDD]-[N]PX[P]S   (đóng gói theo số lượng hạt)
+ *
+ * Ví dụ:
+ *   group="Lá Ổi", 200g/gói           → LO-0517-200G
+ *   group="Hạt Sen", 100g/gói          → HS-0517-100G
+ *   group="Trà Nụ Vối", 50g/gói        → TNV-0517-50G
+ *   group="Hạt Củ Sắn", 150 hạt/gói   → HCS-0517-150S
+ *
+ * @param groupName     Tên nhóm nguyên liệu (tiếng Việt)
+ * @param gramsPerUnit  Gram / gói bán (nếu đóng theo trọng lượng)
+ * @param piecesPerPack Số hạt / gói bán (nếu đóng theo số lượng)
+ * @param date          Ngày tạo (mặc định: hôm nay)
+ */
+export function suggestSkuFromGroup(
+  groupName: string,
+  gramsPerUnit?: number | string | null,
+  piecesPerPack?: number | string | null,
+  date?: Date,
+): string {
+  const prefix = viPrefix(groupName);
+  if (!prefix) return "";
+
+  const dp = datePart(date);
+
+  const grams = gramsPerUnit ? Number(gramsPerUnit) : null;
+  const pieces = piecesPerPack ? Number(piecesPerPack) : null;
+
+  if (grams && grams > 0) return `${prefix}-${dp}-${grams}G`;
+  if (pieces && pieces > 0) return `${prefix}-${dp}-${pieces}S`;
+
+  // No packaging spec yet → return base code only
+  return `${prefix}-${dp}`;
 }

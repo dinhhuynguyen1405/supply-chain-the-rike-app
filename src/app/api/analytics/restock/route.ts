@@ -176,6 +176,7 @@ export interface LinkedPurchaseInfo {
 
 export interface ShoppingListGroup {
   groupName: string;
+  groupId: string | null;
   items: {
     sku: string;
     localName: string;
@@ -446,6 +447,7 @@ function buildRecommendation(
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 export async function GET(req: Request) {
+  try {
   const url = new URL(req.url);
   const targetDays = parseInt(url.searchParams.get("targetDays") ?? "90", 10);
   const leadDays   = parseInt(url.searchParams.get("leadDays")   ?? "21", 10);
@@ -765,8 +767,10 @@ export async function GET(req: Request) {
     if (agg.lastSale  > ga.lastSale)  ga.lastSale  = agg.lastSale;
   }
 
-  // ── 6b. Add products with stock but NO Shopify sales (invisible otherwise) ──
-  // These products have nhungQty or Bros stock but never appeared in any order.
+  // ── 6b. Add products with stock OR production data but NO Shopify sales ──
+  // These products have nhungQty, Bros stock, or production items but never appeared in any order.
+  // Without this pass they'd be invisible — and group-level totalProducedPacks would show 0
+  // even when production items correctly reference them.
   const coveredProductIds = new Set<string>();
   for (const ga of groupAccumMap.values()) {
     for (const gv of ga.variants) { if (gv.product?.id) coveredProductIds.add(gv.product.id); }
@@ -775,9 +779,14 @@ export async function GET(req: Request) {
   for (const product of products) {
     if (coveredProductIds.has(product.id)) continue;   // already covered by order data
 
-    const nhungQty  = product.nhungQty ?? 0;
+    const nhungQty   = product.nhungQty ?? 0;
     const brosQtyChk = getBrosQty(product);
-    if (nhungQty <= 0 && brosQtyChk <= 0) continue;   // no stock at all → skip
+    const hasProductionData =
+      (productionAgg[product.id]        ?? 0) > 0 ||
+      (inProductionAgg[product.id]      ?? 0) > 0 ||
+      (pendingProductionAgg[product.id] ?? 0) > 0;
+    // skip only if truly nothing to show
+    if (nhungQty <= 0 && brosQtyChk <= 0 && !hasProductionData) continue;
 
     const groupId = product.groupId ?? null;
     const groupKey = groupId ?? product.id;
@@ -1027,6 +1036,7 @@ export async function GET(req: Request) {
     if (!shoppingMap.has(groupKey)) {
       shoppingMap.set(groupKey, {
         groupName: group.cost.groupName ?? group.name,
+        groupId: group.groupId,
         items: [],
         totalRawAmount: null,
         rawUnit: needingVariants[0]?.restock.suggestedRawUnit ?? null,
@@ -1085,4 +1095,8 @@ export async function GET(req: Request) {
     leadDays,
     generatedAt: now.toISOString(),
   } satisfies RestockResponse);
+  } catch (err) {
+    console.error("[GET /api/analytics/restock] Error:", err);
+    return Response.json({ error: String(err) }, { status: 500 });
+  }
 }

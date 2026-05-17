@@ -10,11 +10,16 @@ const include = {
 } as const;
 
 export async function GET() {
-  const orders = await prisma.productionOrder.findMany({
-    orderBy: { createdAt: "desc" },
-    include,
-  });
-  return Response.json(orders);
+  try {
+    const orders = await prisma.productionOrder.findMany({
+      orderBy: { createdAt: "desc" },
+      include,
+    });
+    return Response.json(orders);
+  } catch (err) {
+    console.error("[GET /api/production] Error:", err);
+    return Response.json({ error: String(err) }, { status: 500 });
+  }
 }
 
 /**

@@ -4,29 +4,34 @@ import { generateOrderCode, generateProductionCode, calcPlannedQty } from "@/lib
 import { triggerSheetSync } from "@/lib/sync-trigger";
 
 export async function GET() {
-  const orders = await prisma.purchaseOrder.findMany({
-    orderBy: { orderDate: "desc" },
-    include: {
-      supplier: true,
-      items: { include: { product: true } },
-      payments: true,
-      productionOrder: {
-        select: {
-          id: true,
-          code: true,
-          status: true,
-          items: {
-            select: {
-              plannedQty: true,
-              actualQty: true,
-              product: { select: { nameVi: true, name: true } },
+  try {
+    const orders = await prisma.purchaseOrder.findMany({
+      orderBy: { orderDate: "desc" },
+      include: {
+        supplier: true,
+        items: { include: { product: true } },
+        payments: true,
+        productionOrder: {
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            items: {
+              select: {
+                plannedQty: true,
+                actualQty: true,
+                product: { select: { nameVi: true, name: true } },
+              },
             },
           },
         },
       },
-    },
-  });
-  return Response.json(orders);
+    });
+    return Response.json(orders);
+  } catch (err) {
+    console.error("[GET /api/purchases] Error:", err);
+    return Response.json({ error: String(err) }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -67,9 +72,11 @@ export async function POST(req: NextRequest) {
       sellingPriceVnd: body.sellingPriceVnd ? Number(body.sellingPriceVnd) : null,
       items: {
         create: body.items.map(
-          (item: { productId: string; quantity: number; priceVnd: number; subtotalVnd: number; notes?: string }) => ({
-            productId: item.productId,
+          (item: { productId: string; groupId?: string; quantity: number; unit?: string; priceVnd: number; subtotalVnd: number; notes?: string }) => ({
+            productId: item.productId || null,
+            groupId: item.groupId || null,
             quantity: item.quantity,
+            unit: item.unit || null,
             priceVnd: item.priceVnd,
             subtotalVnd: item.subtotalVnd,
             notes: item.notes || null,
@@ -102,7 +109,7 @@ export async function POST(req: NextRequest) {
                 piecesPerPack: pi.product?.piecesPerPack ?? null,
                 plannedQty: pi.product ? calcPlannedQty(
                   pi.quantity,
-                  pi.product.unit,
+                  pi.unit || pi.product.unit,
                   pi.product.gramsPerUnit,
                   pi.product.piecesPerUnit,
                   pi.product.piecesPerPack,

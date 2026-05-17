@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { formatDate, formatVND } from "@/lib/utils";
 import {
   Factory, ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck,
-  Trash2, Plus, Pencil, X, DollarSign, ImageIcon, ExternalLink,
+  Trash2, Plus, Pencil, X, DollarSign, ImageIcon, ExternalLink, RefreshCw,
 } from "lucide-react";
 
 interface Product {
@@ -228,11 +228,15 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
     setLoading(false);
   }
 
+  async function loadProducts() {
+    const res = await fetch("/api/products?limit=5000");
+    const data = await res.json();
+    setProducts(Array.isArray(data) ? data : (data.products || []));
+  }
+
   useEffect(() => {
     load();
-    fetch("/api/products?limit=5000")
-      .then(res => res.json())
-      .then(data => setProducts(Array.isArray(data) ? data : (data.products || [])));
+    loadProducts();
   }, [id]);
 
   function setField(itemId: string, field: keyof ItemState, value: string) {
@@ -455,6 +459,8 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
 
   // For add item form: get purchase items that are group-based
   const purchaseItemsForAdd = order.purchaseOrder.items ?? [];
+  // Auto-expand add item form when no items exist
+  const autoAddItem = !isDone && order.items.length === 0;
 
   // Filtered products for add item form
   const addItemFilteredProducts = addItemState.productSearch.trim().length >= 2
@@ -514,7 +520,30 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
         <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
           <PackageCheck className="h-4 w-4 text-orange-600" />
           Danh sách sản phẩm
+          {order.items.length === 0 && !isDone && (
+            <span className="ml-2 text-xs font-normal text-orange-600 bg-orange-50 border border-orange-200 rounded px-2 py-0.5">
+              Chưa có SKU — thêm bên dưới
+            </span>
+          )}
         </h2>
+
+        {/* Empty-state guidance for group-based purchases */}
+        {order.items.length === 0 && !isDone && (
+          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+            <p className="font-semibold mb-1 flex items-center gap-1.5">
+              <PackageCheck className="h-4 w-4" /> Đơn mua theo nhóm nguyên liệu
+            </p>
+            <p className="text-xs text-blue-700 space-y-1">
+              <span className="block">→ Nhóm NL chưa được phân bổ thành SKU cụ thể.</span>
+              <span className="block">→ Dùng form bên dưới để khai báo:</span>
+              <span className="block ml-3">1. Chọn nhóm nguyên liệu (từ đơn mua)</span>
+              <span className="block ml-3">2. Phân bổ bao nhiêu kg cho SKU này</span>
+              <span className="block ml-3">3. Khai báo gram/gói (VD: 200g → 100g) để tính số gói</span>
+              <span className="block ml-3">4. Nhập số gói thực tế khi đóng xong</span>
+            </p>
+          </div>
+        )}
+
         <div className="space-y-6">
           {order.items.map((item) => {
             const s = itemStates[item.id] ?? {
@@ -566,12 +595,21 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 space-y-1">
-                        <Input
-                          placeholder="Tìm sản phẩm để đổi..."
-                          className="text-xs h-7 bg-white w-full max-w-[250px]"
-                          value={productSearch[item.id] || ""}
-                          onChange={(e) => setProductSearch((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                        />
+                        <div className="flex items-center gap-1.5">
+                          <Input
+                            placeholder="Tìm sản phẩm để đổi..."
+                            className="text-xs h-7 bg-white flex-1 max-w-[220px]"
+                            value={productSearch[item.id] || ""}
+                            onChange={(e) => setProductSearch((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                          />
+                          <button
+                            onClick={loadProducts}
+                            title="Tải lại danh sách sản phẩm"
+                            className="h-7 w-7 flex items-center justify-center rounded border border-gray-200 bg-white text-gray-400 hover:text-indigo-600 hover:border-indigo-300 transition-colors shrink-0"
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                          </button>
+                        </div>
                         <select
                           className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
                           value={s.productId ?? item.product.id}
@@ -815,7 +853,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
         {/* Add SKU button */}
         {!isDone && (
           <div className="mt-4 pt-4 border-t border-gray-100">
-            {!showAddItem ? (
+            {!(showAddItem || autoAddItem) ? (
               <Button
                 size="sm" variant="outline"
                 className="h-7 text-xs text-purple-700 border-purple-300 hover:bg-purple-50"
@@ -856,7 +894,16 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                 </div>
 
                 <div>
-                  <Label className="text-xs text-gray-500">Sản phẩm SKU</Label>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-gray-500">Sản phẩm SKU</Label>
+                    <button
+                      onClick={loadProducts}
+                      title="Tải lại danh sách sản phẩm"
+                      className="h-5 w-5 flex items-center justify-center rounded text-gray-400 hover:text-indigo-600 transition-colors"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                    </button>
+                  </div>
                   <Input
                     placeholder="Tìm sản phẩm (nhập 2+ ký tự)..."
                     className="h-7 text-xs mt-1"
@@ -866,7 +913,17 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                   <select
                     className="mt-1 h-8 w-full rounded-md border border-purple-200 bg-white px-2 text-xs"
                     value={addItemState.productId}
-                    onChange={(e) => setAddItemState((p) => ({ ...p, productId: e.target.value }))}
+                    onChange={(e) => {
+                      const selectedProd = products.find((p) => p.id === e.target.value);
+                      setAddItemState((p) => ({
+                        ...p,
+                        productId: e.target.value,
+                        // Auto-fill packaging config from product defaults
+                        gramsPerPack: selectedProd?.gramsPerUnit ? String(selectedProd.gramsPerUnit) : p.gramsPerPack,
+                        piecesPerUnit: selectedProd?.piecesPerUnit ? String(selectedProd.piecesPerUnit) : p.piecesPerUnit,
+                        piecesPerPack: selectedProd?.piecesPerPack ? String(selectedProd.piecesPerPack) : p.piecesPerPack,
+                      }));
+                    }}
                   >
                     <option value="">
                       {addItemState.productSearch.trim().length >= 2
@@ -877,6 +934,7 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                       <option key={p.id} value={p.id}>
                         {p.nameVi ? `${p.nameVi} (${p.name.substring(0, 35)})` : p.name} · {p.unit}
                         {p.gramsPerUnit ? ` · ${p.gramsPerUnit}g/gói` : ""}
+                        {p.piecesPerPack ? ` · ${p.piecesPerPack} hạt/gói` : ""}
                       </option>
                     ))}
                   </select>
@@ -912,6 +970,27 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                   </div>
                 </div>
 
+                {/* Live pack count preview */}
+                {addItemState.allocatedQty && (addItemState.gramsPerPack || (addItemState.piecesPerUnit && addItemState.piecesPerPack)) && (
+                  <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs text-indigo-800">
+                    {(() => {
+                      const allocKg = Number(addItemState.allocatedQty);
+                      const gpp = Number(addItemState.gramsPerPack);
+                      const ppu = Number(addItemState.piecesPerUnit);
+                      const ppp = Number(addItemState.piecesPerPack);
+                      if (ppu > 0 && ppp > 0) {
+                        const packs = Math.floor((allocKg * ppu) / ppp);
+                        return <span><strong>{allocKg} kg</strong> × {ppu} hạt/kg ÷ {ppp} hạt/gói = <strong className="text-indigo-700 text-sm">{packs} gói</strong> dự kiến</span>;
+                      }
+                      if (gpp > 0) {
+                        const packs = Math.floor((allocKg * 1000) / gpp);
+                        return <span><strong>{allocKg} kg</strong> ÷ {gpp}g/gói = <strong className="text-indigo-700 text-sm">{packs} gói</strong> dự kiến</span>;
+                      }
+                      return null;
+                    })()}
+                  </div>
+                )}
+
                 <div className="flex gap-2">
                   <Button
                     size="sm" className="h-7 text-xs bg-purple-600 hover:bg-purple-700 text-white"
@@ -919,15 +998,17 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
                   >
                     Thêm SKU
                   </Button>
-                  <Button
-                    size="sm" variant="ghost" className="h-7 text-xs"
-                    onClick={() => {
-                      setShowAddItem(false);
-                      setAddItemState({ productId: "", productSearch: "", purchaseItemId: "", allocatedQty: "", gramsPerPack: "", piecesPerUnit: "", piecesPerPack: "" });
-                    }}
-                  >
-                    <X className="h-3 w-3 mr-1" /> Huỷ
-                  </Button>
+                  {!autoAddItem && (
+                    <Button
+                      size="sm" variant="ghost" className="h-7 text-xs"
+                      onClick={() => {
+                        setShowAddItem(false);
+                        setAddItemState({ productId: "", productSearch: "", purchaseItemId: "", allocatedQty: "", gramsPerPack: "", piecesPerUnit: "", piecesPerPack: "" });
+                      }}
+                    >
+                      <X className="h-3 w-3 mr-1" /> Huỷ
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
@@ -1246,9 +1327,19 @@ export default function ProductionDetailPage({ params }: { params: Promise<{ id:
         {!isDone ? (
           <>
             {order.status === "pending" && (
-              <Button onClick={handleStart} disabled={saving} variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-50">
-                Bắt đầu sản xuất
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={handleStart}
+                  disabled={saving || order.items.length === 0}
+                  variant="outline"
+                  className="text-blue-700 border-blue-300 hover:bg-blue-50 disabled:opacity-40"
+                >
+                  Bắt đầu sản xuất
+                </Button>
+                {order.items.length === 0 && (
+                  <span className="text-xs text-orange-600">Thêm ít nhất 1 SKU trước khi bắt đầu</span>
+                )}
+              </div>
             )}
             {order.status === "in_production" && (
               <>

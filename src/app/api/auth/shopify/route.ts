@@ -22,7 +22,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Thiếu SHOPIFY_CLIENT_ID trong .env" }, { status: 400 });
   }
 
-  const scopes = "read_orders,read_products,read_inventory,read_customers";
+  const scopes = [
+    "read_orders", "write_orders",
+    "read_products", "write_products",
+    "read_inventory", "write_inventory",
+    "read_customers",
+  ].join(",");
   const redirectUri = `${url.origin}/api/auth/shopify/callback`;
 
   const authUrl = `https://${shop}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${redirectUri}`;
