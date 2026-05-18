@@ -19,7 +19,7 @@ import {
   Upload, Sparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { suggestSku, suggestSkuFromGroup } from "@/lib/sku-suggest";
+import { generateSku } from "@/lib/sku-suggest";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -160,22 +160,9 @@ export default function ProductsPage() {
   // skuLocked = true when user has manually typed in the SKU field
   const [skuLocked, setSkuLocked] = useState(false);
 
-  /** Compute the auto-suggested SKU based on current form state */
-  function computeAutoSku(
-    overrides: Partial<{ groupId: string; gramsPerUnit: string; piecesPerPack: string; name: string; nameVi: string }> = {}
-  ): string {
-    const gId    = overrides.groupId    ?? formGroupId;
-    const grams  = overrides.gramsPerUnit  ?? form.gramsPerUnit;
-    const pieces = overrides.piecesPerPack ?? form.piecesPerPack;
-    const name   = overrides.name  ?? form.name;
-    const nameVi = overrides.nameVi ?? form.nameVi;
-
-    if (gId) {
-      const grp = groups.find(g => g.id === gId);
-      if (grp) return suggestSkuFromGroup(grp.name, grams || null, pieces || null);
-    }
-    // Fallback: product name-based
-    return suggestSku(name, nameVi || null);
+  /** Sinh SKU tự động: timestamp mmHHDDMMYYYY */
+  function computeAutoSku(): string {
+    return generateSku();
   }
 
   // Exchange rate for cost calculation
@@ -323,7 +310,7 @@ export default function ProductsPage() {
 
   function openPublish(p: { id: string; name: string; nameVi?: string | null; priceUsd: number | null }) {
     setPublishProduct(p);
-    setPublishSku(suggestSku(p.name, p.nameVi));
+    setPublishSku(generateSku());
     setPublishPrice(p.priceUsd ? String(p.priceUsd) : "");
     setPublishStatus("draft");
     setPublishOpen(true);
@@ -886,7 +873,7 @@ export default function ProductsPage() {
                 onChange={(e) => {
                   const newName = e.target.value;
                   const sku = !editing && !skuLocked
-                    ? computeAutoSku({ name: newName })
+                    ? computeAutoSku()
                     : form.skuShopify;
                   setForm(prev => ({ ...prev, name: newName, skuShopify: sku }));
                 }}
@@ -900,7 +887,7 @@ export default function ProductsPage() {
                 onChange={(e) => {
                   const newVi = e.target.value;
                   const sku = !editing && !skuLocked
-                    ? computeAutoSku({ nameVi: newVi })
+                    ? computeAutoSku()
                     : form.skuShopify;
                   setForm(prev => ({ ...prev, nameVi: newVi, skuShopify: sku }));
                 }}
@@ -917,7 +904,7 @@ export default function ProductsPage() {
                   const newGid = e.target.value;
                   setFormGroupId(newGid);
                   if (!editing && !skuLocked) {
-                    const sku = computeAutoSku({ groupId: newGid });
+                    const sku = computeAutoSku();
                     setForm(prev => ({ ...prev, skuShopify: sku }));
                   }
                 }}
@@ -1001,7 +988,7 @@ export default function ProductsPage() {
                     setForm(prev => {
                       const next = { ...prev, gramsPerUnit: v };
                       if (!editing && !skuLocked) {
-                        next.skuShopify = computeAutoSku({ gramsPerUnit: v, piecesPerPack: "" });
+                        next.skuShopify = computeAutoSku();
                       }
                       return next;
                     });
@@ -1031,7 +1018,7 @@ export default function ProductsPage() {
                       setForm(prev => {
                         const next = { ...prev, piecesPerPack: v };
                         if (!editing && !skuLocked && !prev.gramsPerUnit) {
-                          next.skuShopify = computeAutoSku({ piecesPerPack: v });
+                          next.skuShopify = computeAutoSku();
                         }
                         return next;
                       });
@@ -1081,7 +1068,7 @@ export default function ProductsPage() {
                   SKU Shopify *
                   <button
                     type="button"
-                    onClick={() => setPublishSku(suggestSku(publishProduct.name, (publishProduct as { nameVi?: string | null }).nameVi))}
+                    onClick={() => setPublishSku(generateSku())}
                     className="flex items-center gap-1 text-[10px] text-purple-600 hover:text-purple-700 font-medium"
                   >
                     <Sparkles className="h-2.5 w-2.5" /> Gợi ý lại

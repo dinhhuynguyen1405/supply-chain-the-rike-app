@@ -1,22 +1,17 @@
 /**
  * sku-suggest.ts — Sinh SKU chuẩn nhất quán.
  *
- * Format: [CHỮ-VIẾT-TẮT]-[MMDD]-[SIZE]
+ * Format: mmHHDDMMYYYY
  *
- *   PREFIX  = chữ đầu mỗi từ trong tên tiếng Việt (bỏ dấu)
- *   MMDD    = tháng+ngày tạo listing (cố định cho tất cả variant cùng sản phẩm)
- *   SIZE    = kích thước / số lượng (phần DUY NHẤT khác giữa các variant)
+ *   SKU = phút+giờ+ngày+tháng+năm tạo listing — chuỗi số thuần 12 chữ số.
+ *   Mỗi SKU tạo ra tại một thời điểm khác nhau là duy nhất tuyệt đối.
+ *   Không có prefix chữ cái, không có size suffix → barcode thuần số, scan nhanh.
  *
- * Ví dụ:
- *   nameVi="Hạt Sen"         → HS-0514-200G   (thêm 400g → HS-0514-400G)
- *   nameVi="Hạt Bạc Hà"     → HBH-0514-1000S (thêm 2000 seeds → HBH-0514-2000S)
- *   nameVi="Bánh Phồng Tôm" → BPT-0514-100G
- *   nameVi="Hạt Cỏ Pampas"  → HCP-0514-3000S
- *   nameVi="Bột Cần Tây"    → BCT-0514-100G
- *   nameVi="Hạt Hướng Dương"→ HHD-0514-600S
+ * Ví dụ (tạo lúc 14:35 ngày 18/05/2026):
+ *   → 353518052026
  *
- * Không có nameVi (fallback):
- *   "Dried Chamomile 100g"  → CHA-0514-100G  (3 chars đầu từ key word)
+ * suggestSku / suggestSkuFromGroup vẫn giữ nguyên để dùng khi cần prefix,
+ * nhưng hàm chính để tạo SKU mới là datePart() dùng trực tiếp.
  */
 
 // ── Vietnamese diacritic removal ─────────────────────────────────────────────
@@ -101,10 +96,13 @@ function extractSuffix(name: string): string {
 
 function datePart(date?: Date): string {
   const d = date ?? new Date();
+  const min  = String(d.getMinutes()).padStart(2, "0");
+  const hour = String(d.getHours()).padStart(2, "0");
+  const dd   = String(d.getDate()).padStart(2, "0");
+  const mm   = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = String(d.getFullYear());
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return yyyy + mm + dd; // "20260517" for May 17 2026
+  // Format: mmHHDDMMYYYY — e.g. "353518052026" for 14:35 on May 18 2026
+  return min + hour + dd + mm + yyyy;
 }
 
 // ── Prefix builders ───────────────────────────────────────────────────────────
@@ -188,24 +186,32 @@ export function baseCode(nameVi: string, date?: Date): string {
   return `${prefix}-${datePart(date)}`;
 }
 
-// ── Group-based SKU (new primary format) ─────────────────────────────────────
+// ── Primary SKU generator ─────────────────────────────────────────────────────
 
 /**
- * Sinh SKU theo nhóm nguyên liệu (dạng mới).
+ * Sinh SKU chính thức: chuỗi số thuần 12 chữ số theo timestamp tạo listing.
  *
- * Format: [GROUP_INITIALS]-[MMDD]-[GRAMS]G   (đóng gói theo trọng lượng)
- *         [GROUP_INITIALS]-[MMDD]-[N]PX[P]S   (đóng gói theo số lượng hạt)
+ * Format: mmHHDDMMYYYY
+ *   mm   = phút (00–59)
+ *   HH   = giờ  (00–23)
+ *   DD   = ngày (01–31)
+ *   MM   = tháng (01–12)
+ *   YYYY = năm (4 chữ số)
  *
- * Ví dụ:
- *   group="Lá Ổi", 200g/gói           → LO-0517-200G
- *   group="Hạt Sen", 100g/gói          → HS-0517-100G
- *   group="Trà Nụ Vối", 50g/gói        → TNV-0517-50G
- *   group="Hạt Củ Sắn", 150 hạt/gói   → HCS-0517-150S
+ * Ví dụ: tạo lúc 14:35 ngày 18/05/2026 → "353518052026"
  *
- * @param groupName     Tên nhóm nguyên liệu (tiếng Việt)
- * @param gramsPerUnit  Gram / gói bán (nếu đóng theo trọng lượng)
- * @param piecesPerPack Số hạt / gói bán (nếu đóng theo số lượng)
- * @param date          Ngày tạo (mặc định: hôm nay)
+ * Mỗi lần gọi tại thời điểm khác nhau cho ra mã duy nhất.
+ * Chuỗi số thuần → barcode CODE128 / EAN đẹp, scan nhanh, không lỗi.
+ */
+export function generateSku(date?: Date): string {
+  return datePart(date);
+}
+
+// ── Group-based SKU (legacy, giữ lại để tương thích) ─────────────────────────
+
+/**
+ * @deprecated Dùng generateSku() cho sản phẩm mới.
+ * Giữ lại để tương thích với các form/flow cũ.
  */
 export function suggestSkuFromGroup(
   groupName: string,
@@ -217,13 +223,10 @@ export function suggestSkuFromGroup(
   if (!prefix) return "";
 
   const dp = datePart(date);
-
   const grams = gramsPerUnit ? Number(gramsPerUnit) : null;
   const pieces = piecesPerPack ? Number(piecesPerPack) : null;
 
   if (grams && grams > 0) return `${prefix}-${dp}-${grams}G`;
   if (pieces && pieces > 0) return `${prefix}-${dp}-${pieces}S`;
-
-  // No packaging spec yet → return base code only
   return `${prefix}-${dp}`;
 }
