@@ -32,14 +32,27 @@ const URGENCY_ORDER: Record<string, number> = {
   unmapped: 5,
 };
 
-// Classify an item into hạt / trà / other based on name or group name
+// Classify an item into hạt / trà&thảo dược based on name or group name.
+// Logic:
+//   1. "Hạt" = group/name contains "hạt" → seeds sold for planting
+//   2. "Trà & Thảo Dược" = everything else that is a plant/herb/health product
+//      (trà, lá, rau, nấm, bột, nghệ, đông trùng, rau má…)
+//   3. Non-plant products (nến, nhang, bánh phồng tôm…) → still shown
+//      but labeled "Khác" — kept minimal.
+//
+// In practice, the Rike store sells seeds (hạt) and herbal/tea products (thảo dược).
+// Any item that doesn't contain "hạt" is treated as thảo dược/trà by default.
+// Only explicitly non-plant groups (candles, incense, food snacks) become "other".
+const NON_PLANT_KEYWORDS = ["nến", "nhang hương", "bánh phồng", "mỹ phẩm", "đồ gia dụng"];
+
 function classifyProduct(name: string, groupName?: string | null): "hat" | "tra" | "other" {
   const haystack = `${name} ${groupName ?? ""}`.toLowerCase();
-  // "hạt" covers seeds (jicama, moringa, etc.)
-  if (haystack.includes("hạt") || haystack.includes("hat")) return "hat";
-  // "trà" covers teas
-  if (haystack.includes("trà") || haystack.includes("tra ")) return "tra";
-  return "other";
+  // Seeds → hạt
+  if (haystack.includes("hạt")) return "hat";
+  // Non-plant products → khác (genuinely different category)
+  if (NON_PLANT_KEYWORDS.some(kw => haystack.includes(kw))) return "other";
+  // Everything else (trà, lá, rau, nấm, bột, nghệ, cordyceps…) → thảo dược/trà
+  return "tra";
 }
 
 const URGENCY = {
@@ -702,9 +715,9 @@ export default function RestockPage() {
           <>
             {(
               [
-                { key: "hat",   items: grouped.hat,   label: "🌱 Hạt giống",  accent: "border-l-green-400",  headerBg: "bg-green-50 border-green-100",   textColor: "text-green-700" },
-                { key: "tra",   items: grouped.tra,   label: "🍃 Trà",        accent: "border-l-emerald-400", headerBg: "bg-emerald-50 border-emerald-100", textColor: "text-emerald-700" },
-                { key: "other", items: grouped.other, label: "📦 Khác",       accent: "border-l-gray-300",    headerBg: "bg-gray-50 border-gray-100",      textColor: "text-gray-600" },
+                { key: "hat",   items: grouped.hat,   label: "🌱 Hạt giống",        accent: "border-l-green-400",  headerBg: "bg-green-50 border-green-100",   textColor: "text-green-700" },
+                { key: "tra",   items: grouped.tra,   label: "🍃 Thảo Dược & Trà",  accent: "border-l-emerald-400", headerBg: "bg-emerald-50 border-emerald-100", textColor: "text-emerald-700" },
+                { key: "other", items: grouped.other, label: "📦 Khác",              accent: "border-l-gray-300",    headerBg: "bg-gray-50 border-gray-100",      textColor: "text-gray-600" },
               ] as const
             ).filter(g => g.items.length > 0).map(group => (
               <div key={group.key} className={`rounded-xl border border-gray-200 bg-white overflow-hidden border-l-4 ${group.accent}`}>
