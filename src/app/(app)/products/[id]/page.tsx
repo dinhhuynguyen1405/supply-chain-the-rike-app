@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Package, Truck, CheckCircle2, Clock, BarChart3, ImageIcon, ExternalLink, Trash2, Save, Link2, ImageOff } from "lucide-react";
+import { ArrowLeft, Package, Truck, CheckCircle2, Clock, BarChart3, ImageIcon, ExternalLink, Trash2, Save, Link2, ImageOff, Pencil, X } from "lucide-react";
 import type { InventoryProduct } from "@/app/api/inventory/route";
 import { formatVND, formatDate, STATUS_LABELS, STATUS_COLORS } from "@/lib/utils";
 import Link from "next/link";
@@ -50,12 +50,78 @@ interface Product {
   labelDriveUrl: string | null;
 }
 
-// ── BarcodeCard: always shows SKU + barcode, even for products without any SKU ──
-function BarcodeCard({ product, onReload }: { product: Product; onReload: () => void }) {
-  const [customSku, setCustomSku] = useState("");
+// ── SkuRow: editable inline SKU field ────────────────────────────────────────
+function SkuRow({
+  label, value, field, productId, onReload,
+}: {
+  label: string; value: string | null; field: string; productId: string; onReload: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
   const [saving, setSaving] = useState(false);
 
-  // Derive best available SKU for barcode generation
+  async function save() {
+    const val = draft.trim();
+    setSaving(true);
+    const res = await fetch(`/api/products/${productId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [field]: val || null }),
+    });
+    setSaving(false);
+    if (res.ok) { toast.success("Đã lưu SKU"); onReload(); setEditing(false); }
+    else toast.error("Lỗi lưu SKU");
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+      <div className="flex items-center justify-between gap-2 mb-0.5">
+        <p className="text-[10px] text-gray-400 font-medium">{label}</p>
+        {!editing ? (
+          <button
+            onClick={() => { setDraft(value ?? ""); setEditing(true); }}
+            className="text-[10px] text-indigo-500 hover:text-indigo-700 flex items-center gap-0.5"
+          >
+            <Pencil className="h-2.5 w-2.5" /> Sửa
+          </button>
+        ) : (
+          <button
+            onClick={() => setEditing(false)}
+            className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-0.5"
+          >
+            <X className="h-2.5 w-2.5" /> Huỷ
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="flex gap-1.5 mt-1">
+          <input
+            autoFocus
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+            className="flex-1 h-7 rounded border border-indigo-300 bg-white px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          />
+          <button
+            onClick={save}
+            disabled={saving}
+            className="h-7 px-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium disabled:opacity-50"
+          >
+            {saving ? "..." : "Lưu"}
+          </button>
+        </div>
+      ) : (
+        <p className={`font-mono text-sm font-semibold ${value ? "text-gray-800" : "text-gray-300 italic text-xs"}`}>
+          {value ?? "Chưa có — bấm Sửa để thêm"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── BarcodeCard: always shows SKU + barcode, even for products without any SKU ──
+function BarcodeCard({ product, onReload }: { product: Product; onReload: () => void }) {
   const activeSku =
     product.skuShopify ??
     product.skuTiktok ??
@@ -63,89 +129,23 @@ function BarcodeCard({ product, onReload }: { product: Product; onReload: () => 
     product.skuBros ??
     null;
 
-  async function saveSkuShopify() {
-    const val = customSku.trim().toUpperCase();
-    if (!val) return;
-    setSaving(true);
-    const res = await fetch(`/api/products/${product.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ skuShopify: val }),
-    });
-    setSaving(false);
-    if (res.ok) { onReload(); setCustomSku(""); }
-  }
-
   return (
     <Card className="p-5">
       <div className="grid gap-6 sm:grid-cols-2">
-        {/* SKU list */}
-        <div className="space-y-3">
+        {/* SKU list — all editable */}
+        <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">SKU</p>
-
-          {product.skuShopify && (
-            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
-              <p className="text-[10px] text-gray-400 mb-0.5">Shopify</p>
-              <p className="font-mono text-sm font-semibold text-gray-800">{product.skuShopify}</p>
-            </div>
-          )}
-          {product.skuTiktok && (
-            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
-              <p className="text-[10px] text-gray-400 mb-0.5">TikTok</p>
-              <p className="font-mono text-sm font-semibold text-gray-800">{product.skuTiktok}</p>
-            </div>
-          )}
-          {product.skuAmz && (
-            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
-              <p className="text-[10px] text-gray-400 mb-0.5">Amazon ASIN</p>
-              <p className="font-mono text-sm font-semibold text-gray-800">{product.skuAmz}</p>
-            </div>
-          )}
-          {product.skuBros && (
-            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
-              <p className="text-[10px] text-gray-400 mb-0.5">Bros Warehouse</p>
-              <p className="font-mono text-sm font-semibold text-gray-800">{product.skuBros}</p>
-            </div>
-          )}
-
-          {/* Nếu chưa có skuShopify → cho phép nhập nhanh */}
-          {!product.skuShopify && (
-            <div className="space-y-1.5 pt-1">
-              <p className="text-[10px] text-amber-600 font-medium">Chưa có SKU Shopify — nhập để tạo barcode</p>
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  placeholder="VD: GRA-0001-200G"
-                  value={customSku}
-                  onChange={(e) => setCustomSku(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => { if (e.key === "Enter") saveSkuShopify(); }}
-                  className="flex-1 h-7 rounded-md border border-amber-300 bg-amber-50 px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-400"
-                />
-                <button
-                  onClick={saveSkuShopify}
-                  disabled={saving || !customSku.trim()}
-                  className="h-7 px-2 rounded-md bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium disabled:opacity-50"
-                >
-                  {saving ? "..." : "Lưu"}
-                </button>
-              </div>
-            </div>
-          )}
+          <SkuRow label="Shopify"        value={product.skuShopify} field="skuShopify" productId={product.id} onReload={onReload} />
+          <SkuRow label="TikTok"         value={product.skuTiktok}  field="skuTiktok"  productId={product.id} onReload={onReload} />
+          <SkuRow label="Amazon ASIN"    value={product.skuAmz}     field="skuAmz"     productId={product.id} onReload={onReload} />
+          <SkuRow label="Bros Warehouse" value={product.skuBros}    field="skuBros"    productId={product.id} onReload={onReload} />
         </div>
 
         {/* Barcode / QR generator */}
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Barcode / QR</p>
           {activeSku ? (
-            <BarcodeGenerator
-              sku={activeSku}
-              label={product.nameVi ?? product.name}
-            />
-          ) : customSku.trim() ? (
-            <BarcodeGenerator
-              sku={customSku.trim().toUpperCase()}
-              label={product.nameVi ?? product.name}
-            />
+            <BarcodeGenerator sku={activeSku} label={product.nameVi ?? product.name} />
           ) : (
             <div className="flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50 min-h-[120px]">
               <p className="text-xs text-gray-400 text-center px-4">Nhập SKU bên trái để tạo barcode</p>
