@@ -557,3 +557,34 @@ model BrosFee {
   note        String?
   createdAt   DateTime @default(now())
 }
+
+// ─── HOÀN TRẢ (REFUNDS) ──────────────────────────────────────────────────────
+model SalesRefund {
+  id             String   @id @default(cuid())
+  source         String   // "shopify" | "tiktok" | "manual"
+  shopifyOrderId String?  // Mã đơn Shopify (#1234)
+  orderName      String?  // Tên đơn hiển thị
+  amountUsd      Float    // Số tiền hoàn (USD)
+  reason         String?  // Lý do hoàn
+  refundedAt     DateTime
+  notes          String?
+  createdAt      DateTime @default(now())
+}
+
+// ─── CHI PHÍ VẬN HÀNH ────────────────────────────────────────────────────────
+model OperatingCost {
+  id          String   @id @default(cuid())
+  type        String
+  // "shopify_fee"       = Phí giao dịch Shopify (~2%)
+  // "tiktok_commission" = Hoa hồng TikTok (~5-8%)
+  // "ads"               = Chi phí quảng cáo
+  // "shipping_domestic" = Ship nội địa VN
+  // "other"             = Khác
+  channel     String?  // "shopify" | "tiktok" | null
+  amountUsd   Float?
+  amountVnd   Float?
+  date        DateTime
+  description String
+  notes       String?
+  createdAt   DateTime @default(now())
+}

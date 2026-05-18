@@ -1,11 +1,12 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard, ShoppingCart, TrendingUp, Package,
   Users, Link2, Boxes, ShoppingBag, Truck,
   ClipboardList, Wallet, Settings, Factory,
-  BarChart3, Building2, DatabaseZap,
+  BarChart3, Building2, DatabaseZap, RotateCcw, Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,19 +19,21 @@ const PIPELINE: { href: string; icon: React.ElementType; label: string; step?: n
   { href: "/shipments",  icon: Truck,        label: "Lô vận chuyển",       step: 3 },
 ];
 
-const WAREHOUSE: { href: string; icon: React.ElementType; label: string }[] = [
-  { href: "/inventory",           icon: Boxes,            label: "Tồn kho" },
-  { href: "/fulfillment",         icon: ClipboardList,    label: "Lệnh đóng hàng" },
-  { href: "/products",            icon: Package,          label: "Sản phẩm" },
-  { href: "/suppliers",           icon: Users,            label: "Nhà cung cấp" },
+const WAREHOUSE: { href: string; icon: React.ElementType; label: string; badgeKey?: string }[] = [
+  { href: "/inventory",   icon: Boxes,         label: "Tồn kho" },
+  { href: "/fulfillment", icon: ClipboardList, label: "Lệnh đóng hàng", badgeKey: "fulfillment" },
+  { href: "/products",    icon: Package,       label: "Sản phẩm" },
+  { href: "/suppliers",   icon: Users,         label: "Nhà cung cấp" },
 ];
 
-const FINANCE: { href: string; icon: React.ElementType; label: string }[] = [
-  { href: "/sales",     icon: TrendingUp, label: "Bán hàng" },
-  { href: "/fund",      icon: Wallet,     label: "Sổ quỹ" },
-  { href: "/bros-fees", icon: Building2,  label: "Phí kho Bros" },
-  { href: "/restock",   icon: BarChart3,  label: "Phân tích mua thêm" },
-  { href: "/analytics", icon: TrendingUp, label: "Lợi nhuận & COGS" },
+const FINANCE: { href: string; icon: React.ElementType; label: string; badgeKey?: string }[] = [
+  { href: "/sales",            icon: TrendingUp, label: "Bán hàng" },
+  { href: "/fund",             icon: Wallet,     label: "Sổ quỹ" },
+  { href: "/bros-fees",        icon: Building2,  label: "Phí kho Bros" },
+  { href: "/restock",          icon: BarChart3,  label: "Phân tích mua thêm", badgeKey: "restock" },
+  { href: "/refunds",          icon: RotateCcw,  label: "Hoàn trả" },
+  { href: "/operating-costs",  icon: Receipt,    label: "Chi phí vận hành" },
+  { href: "/analytics",        icon: TrendingUp, label: "Lợi nhuận & COGS" },
 ];
 
 const TOOLS: { href: string; icon: React.ElementType; label: string }[] = [
@@ -38,6 +41,25 @@ const TOOLS: { href: string; icon: React.ElementType; label: string }[] = [
   { href: "/links",    icon: Link2,    label: "Liên kết" },
   { href: "/settings", icon: Settings, label: "Cài đặt" },
 ];
+
+// ─── Alert badges ─────────────────────────────────────────────────────────────
+
+interface AlertCounts {
+  criticalRestock: number;
+  pendingFulfillment: number;
+}
+
+function Badge({ count, color }: { count: number; color: "red" | "amber" }) {
+  if (count <= 0) return null;
+  return (
+    <span className={cn(
+      "ml-auto flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-bold text-white",
+      color === "red" ? "bg-red-500" : "bg-amber-500"
+    )}>
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -50,9 +72,10 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 function NavItem({
-  href, icon: Icon, label, active, step,
+  href, icon: Icon, label, active, step, badge,
 }: {
   href: string; icon: React.ElementType; label: string; active: boolean; step?: number;
+  badge?: React.ReactNode;
 }) {
   return (
     <Link
@@ -78,6 +101,7 @@ function NavItem({
         )} />
       )}
       <span className="truncate flex-1 leading-none">{label}</span>
+      {badge}
     </Link>
   );
 }
@@ -86,10 +110,28 @@ function NavItem({
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [alerts, setAlerts] = useState<AlertCounts>({ criticalRestock: 0, pendingFulfillment: 0 });
+
+  useEffect(() => {
+    fetch("/api/alerts")
+      .then((r) => r.json())
+      .then((data) => setAlerts(data))
+      .catch(() => {});
+  }, []);
 
   function isActive(href: string) {
     if (href === "/dashboard") return pathname === "/dashboard";
     return pathname === href || pathname.startsWith(href + "/");
+  }
+
+  function getBadge(badgeKey?: string) {
+    if (badgeKey === "restock" && alerts.criticalRestock > 0) {
+      return <Badge count={alerts.criticalRestock} color="red" />;
+    }
+    if (badgeKey === "fulfillment" && alerts.pendingFulfillment > 0) {
+      return <Badge count={alerts.pendingFulfillment} color="amber" />;
+    }
+    return undefined;
   }
 
   return (
@@ -142,16 +184,16 @@ export function Sidebar() {
         {/* Warehouse */}
         <SectionLabel>Kho &amp; Giao hàng</SectionLabel>
         <div className="space-y-px">
-          {WAREHOUSE.map(({ href, icon, label }) => (
-            <NavItem key={href} href={href} icon={icon} label={label} active={isActive(href)} />
+          {WAREHOUSE.map(({ href, icon, label, badgeKey }) => (
+            <NavItem key={href} href={href} icon={icon} label={label} active={isActive(href)} badge={getBadge(badgeKey)} />
           ))}
         </div>
 
         {/* Finance */}
         <SectionLabel>Tài chính</SectionLabel>
         <div className="space-y-px">
-          {FINANCE.map(({ href, icon, label }) => (
-            <NavItem key={href} href={href} icon={icon} label={label} active={isActive(href)} />
+          {FINANCE.map(({ href, icon, label, badgeKey }) => (
+            <NavItem key={href} href={href} icon={icon} label={label} active={isActive(href)} badge={getBadge(badgeKey)} />
           ))}
         </div>
 

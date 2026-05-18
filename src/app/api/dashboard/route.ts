@@ -2,6 +2,13 @@ import { prisma } from "@/lib/prisma";
 import { toSellingUnits } from "@/lib/utils";
 
 export async function GET() {
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  sixMonthsAgo.setDate(1);
+  sixMonthsAgo.setHours(0, 0, 0, 0);
+
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
   const [
     totalOrders,
     activeOrders,
@@ -26,6 +33,13 @@ export async function GET() {
     brosStocks,
     // Kho Nhung chưa khởi tạo
     nhungUninitCount,
+    // Doanh thu 6 tháng (raw sales items for grouping)
+    recentSalesItems,
+    // Top products
+    topProductsRaw,
+    // Refunds + op costs for adjusted profit
+    refundAgg,
+    opCostAgg,
   ] = await Promise.all([
     prisma.purchaseOrder.count(),
     prisma.purchaseOrder.count({
@@ -81,6 +95,23 @@ export async function GET() {
     prisma.warehouseStock.findMany({ where: { warehouse: "bros" } }),
     // Cảnh báo: sản phẩm có Shopify SKU nhưng nhungQty chưa được khởi tạo
     prisma.product.count({ where: { nhungQty: 0, skuShopify: { not: null } } }),
+    // Doanh thu 6 tháng
+    prisma.salesItem.findMany({
+      where: { orderDate: { gte: sixMonthsAgo } },
+      select: { orderDate: true, subtotalUsd: true },
+    }),
+    // Top products by revenue (last 90 ngày)
+    prisma.salesItem.groupBy({
+      by: ["productId"],
+      where: { orderDate: { gte: ninetyDaysAgo }, productId: { not: null } },
+      _sum: { subtotalUsd: true, quantity: true },
+      orderBy: { _sum: { subtotalUsd: "desc" } },
+      take: 5,
+    }),
+    // Refund tổng
+    prisma.salesRefund.aggregate({ _sum: { amountUsd: true } }),
+    // OpCost tổng
+    prisma.operatingCost.aggregate({ _sum: { amountUsd: true, amountVnd: true } }),
   ]);
 
   // ── Settings ─────────────────────────────────────────────────────────────
@@ -94,6 +125,53 @@ export async function GET() {
   const totalRevenueVnd = totalRevenueUsd * usdToVnd;
   const profitVnd = totalRevenueVnd - totalCostVnd;
   const profitMarginPct = totalRevenueVnd > 0 ? (profitVnd / totalRevenueVnd) * 100 : 0;
+
+  // Adjusted profit: subtract refunds + operating costs
+  const totalRefundsUsd = refundAgg._sum.amountUsd ?? 0;
+  const totalOpCostsUsd = opCostAgg._sum.amountUsd ?? 0;
+  const totalOpCostsVnd = opCostAgg._sum.amountVnd ?? 0;
+  const adjustedProfitVnd = profitVnd
+    - totalRefundsUsd * usdToVnd
+    - totalOpCostsUsd * usdToVnd
+    - totalOpCostsVnd;
+
+  // ── Monthly revenue (last 6 months) ─────────────────────────────────────
+  const monthMap: Record<string, { revenueUsd: number; orders: number }> = {};
+  for (const item of recentSalesItems) {
+    if (!item.orderDate) continue;
+    const d = new Date(item.orderDate);
+    const key = `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+    if (!monthMap[key]) monthMap[key] = { revenueUsd: 0, orders: 0 };
+    monthMap[key].revenueUsd += item.subtotalUsd;
+    monthMap[key].orders += 1;
+  }
+  // Build last 6 months in order
+  const monthlyRevenue: { month: string; revenueUsd: number; orders: number }[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - i);
+    const key = `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+    const label = `T${d.getMonth() + 1}/${d.getFullYear()}`;
+    monthlyRevenue.push({ month: label, ...(monthMap[key] ?? { revenueUsd: 0, orders: 0 }) });
+  }
+
+  // ── Top products ─────────────────────────────────────────────────────────
+  const topProductIds = topProductsRaw.map((r) => r.productId as string).filter(Boolean);
+  const topProductDetails = await prisma.product.findMany({
+    where: { id: { in: topProductIds } },
+    select: { id: true, name: true, nameVi: true },
+  });
+  const prodDetailMap = new Map(topProductDetails.map((p) => [p.id, p]));
+  const topProducts = topProductsRaw.map((r) => {
+    const prod = prodDetailMap.get(r.productId as string);
+    return {
+      productId: r.productId,
+      name: prod?.name ?? "Unknown",
+      nameVi: prod?.nameVi ?? null,
+      totalSold: r._sum.quantity ?? 0,
+      totalRevenueUsd: r._sum.subtotalUsd ?? 0,
+    };
+  });
 
   // ── Nợ khách hàng (mua hộ) ────────────────────────────────────────────────
   const customerDebts: { orderCode: string; owedVnd: number }[] = [];
@@ -147,6 +225,24 @@ export async function GET() {
     }
   }
 
+  // ── Critical stock (hết hàng + có doanh thu gần đây) ────────────────────
+  const recentSaleProductIds = new Set(
+    (await prisma.salesItem.findMany({
+      where: { orderDate: { gte: ninetyDaysAgo }, productId: { not: null } },
+      select: { productId: true },
+      distinct: ["productId"],
+    })).map((s) => s.productId as string)
+  );
+  const criticalStockProducts = allProducts.filter((p) => {
+    if (!p.skuShopify) return false;
+    if (!recentSaleProductIds.has(p.id)) return false;
+    const brosQty =
+      (p.skuAmz ? brosMap[p.skuAmz] : null) ??
+      (p.skuShopify ? brosMap[p.skuShopify] : null) ??
+      0;
+    return p.nhungQty === 0 && brosQty === 0;
+  });
+
   const purchaseActiveCount = ordersByStatus
     .filter((s) => ["confirmed", "in_transit", "arrived"].includes(s.status))
     .reduce((sum, s) => sum + s._count.id, 0);
@@ -168,18 +264,25 @@ export async function GET() {
     totalRevenueVnd,
     profitVnd,
     profitMarginPct,
+    adjustedProfitVnd,
+    totalRefundsUsd,
+    totalOpCostsVnd: totalOpCostsUsd * usdToVnd + totalOpCostsVnd,
     customerDebts,
     totalCustomerDebtVnd: customerDebts.reduce((s, d) => s + d.owedVnd, 0),
     supplierDebtVnd,
     lowStockProducts,
+    criticalStockProducts: criticalStockProducts.map((p) => ({
+      id: p.id, name: p.name, nameVi: p.nameVi,
+    })),
     systemWarnings,
+    monthlyRevenue,
+    topProducts,
     pipeline: {
       purchaseActive: purchaseActiveCount,
       productionPending: pendingProductionCount,
       productionActive: inProductionCount,
       shipmentsActive: activeShipmentsCount,
       shipmentsInTransit: inTransitCount,
-      // ✅ Đúng status mới
       fulfillmentPending: fulfillmentPendingCount,
       fulfillmentNotified: fulfillmentNotifiedCount,
       fulfillmentActive: fulfillmentPendingCount + fulfillmentNotifiedCount,
