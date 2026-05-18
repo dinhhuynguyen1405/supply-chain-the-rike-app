@@ -43,7 +43,8 @@ export default function LinksPage() {
       fetch("/api/purchases"),
     ]);
     const salesData = await salesRes.json();
-    const purchases = await poRes.json();
+    const poData = await poRes.json();
+    const purchases = Array.isArray(poData) ? poData : (poData.orders ?? []);
 
     // /api/sales returns a flat SalesItem[]
     setSalesItems(Array.isArray(salesData) ? salesData : []);

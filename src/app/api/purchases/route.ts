@@ -6,8 +6,12 @@ import { triggerSheetSync } from "@/lib/sync-trigger";
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const page  = Math.max(1, parseInt(url.searchParams.get("page")  ?? "1",  10));
-    const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "20", 10));
+    const pageParam  = url.searchParams.get("page");
+    const limitParam = url.searchParams.get("limit");
+    const paginated  = pageParam !== null; // only paginate when ?page= is explicitly passed
+
+    const page  = Math.max(1, parseInt(pageParam  ?? "1",  10));
+    const limit = Math.min(200, parseInt(limitParam ?? "20", 10));
     const skip  = (page - 1) * limit;
 
     const query = {
@@ -32,6 +36,12 @@ export async function GET(req: NextRequest) {
         },
       },
     };
+
+    if (!paginated) {
+      // Legacy: return plain array when no ?page= param (for shipments, links, etc.)
+      const orders = await prisma.purchaseOrder.findMany(query);
+      return Response.json(orders);
+    }
 
     const [orders, total] = await Promise.all([
       prisma.purchaseOrder.findMany({ ...query, skip, take: limit }),

@@ -33,6 +33,7 @@ interface FulfillmentOrder {
   shippedAt: string | null; trackingCode: string | null;
   tdSheetSynced: boolean; noteSentToTd: string | null; notes: string | null;
   createdAt: string; items: FulfillmentItem[];
+  shopifyFulfilled?: boolean; // derived — true if the Shopify order is already fulfilled
 }
 
 interface NewItem { productId: string; skuRaw: string; productName: string; quantity: string; notes: string; }
@@ -158,15 +159,21 @@ export default function FulfillmentPage() {
     toast.success("Đã xoá"); load();
   }
 
+  // An order is considered "effectively done" if our status is done/cancelled OR
+  // if Shopify has already fulfilled it (label created, item prepared on US side).
+  function isEffectivelyDone(o: FulfillmentOrder) {
+    return o.status === "done" || o.status === "cancelled" || o.shopifyFulfilled === true;
+  }
+
   // Filter
   const filtered = orders.filter((o) => {
-    if (filterWh === "all") return o.status !== "done" && o.status !== "cancelled";
-    if (filterWh === "done") return o.status === "done" || o.status === "cancelled";
-    return (o.warehouseSource === filterWh || o.warehouseSource === "mixed") && o.status !== "done" && o.status !== "cancelled";
+    if (filterWh === "all") return !isEffectivelyDone(o);
+    if (filterWh === "done") return isEffectivelyDone(o);
+    return (o.warehouseSource === filterWh || o.warehouseSource === "mixed") && !isEffectivelyDone(o);
   });
 
-  const pendingNhung = orders.filter((o) => (o.warehouseSource === "nhung" || o.warehouseSource === "mixed") && !o.nhungShippedAt && o.status !== "done" && o.status !== "cancelled").length;
-  const pendingBros = orders.filter((o) => (o.warehouseSource === "bros" || o.warehouseSource === "mixed") && !o.brosShippedAt && o.status !== "done" && o.status !== "cancelled").length;
+  const pendingNhung = orders.filter((o) => (o.warehouseSource === "nhung" || o.warehouseSource === "mixed") && !o.nhungShippedAt && !isEffectivelyDone(o)).length;
+  const pendingBros = orders.filter((o) => (o.warehouseSource === "bros" || o.warehouseSource === "mixed") && !o.brosShippedAt && !isEffectivelyDone(o)).length;
 
   if (loading) return <div className="flex h-64 items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-2 border-green-600 border-t-transparent" /></div>;
 
@@ -230,10 +237,10 @@ export default function FulfillmentPage() {
       {/* Filter tabs */}
       <div className="flex gap-1 rounded-xl bg-gray-100 p-1 w-fit flex-wrap">
         {[
-          { key: "all" as const, label: "Đang xử lý", count: orders.filter((o) => o.status !== "done" && o.status !== "cancelled").length },
+          { key: "all" as const, label: "Đang xử lý", count: orders.filter((o) => !isEffectivelyDone(o)).length },
           { key: "nhung" as const, label: "Kho Nhung", count: pendingNhung, icon: <Home className="h-3.5 w-3.5" /> },
           { key: "bros" as const, label: "Kho Bros", count: pendingBros, icon: <Warehouse className="h-3.5 w-3.5" /> },
-          { key: "done" as const, label: "Hoàn tất / Huỷ", count: orders.filter((o) => o.status === "done" || o.status === "cancelled").length },
+          { key: "done" as const, label: "Hoàn tất / Huỷ", count: orders.filter((o) => isEffectivelyDone(o)).length },
         ].map((item) => (
           <button
             key={item.key}
@@ -275,6 +282,11 @@ export default function FulfillmentPage() {
                     <Badge variant="outline" className={STATUS_COLORS[order.status] ?? "bg-gray-100 text-gray-600"}>
                       {STATUS_LABELS[order.status] ?? order.status}
                     </Badge>
+                    {order.shopifyFulfilled && (
+                      <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">
+                        ✓ Shopify đã fulfilled
+                      </Badge>
+                    )}
                     {order.shopifyOrderId && <span className="text-xs text-gray-400 font-mono">#{order.shopifyOrderId}</span>}
                   </div>
                   <button onClick={() => handleDelete(order.id)} className="text-gray-300 hover:text-red-500 transition-colors p-1" title="Xoá">

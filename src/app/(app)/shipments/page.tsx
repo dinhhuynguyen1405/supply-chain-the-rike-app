@@ -152,7 +152,9 @@ export default function ShipmentsPage() {
         fetch("/api/purchases"),
       ]);
       setBatches(await batchRes.json());
-      setPurchaseOrders(await poRes.json());
+      const poData = await poRes.json();
+      // /api/purchases now returns paginated { orders, total, ... } — fetch all for shipment form
+      setPurchaseOrders(Array.isArray(poData) ? poData : (poData.orders ?? []));
     } catch {
       toast.error("Có lỗi xảy ra khi tải dữ liệu");
     } finally {

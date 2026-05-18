@@ -51,7 +51,38 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
     include: { items: { include: { product: true } } },
   });
-  return Response.json(orders);
+
+  // Map FulfillmentOrders that have a shopifyOrderId to their ShopifyOrder fulfillmentStatus.
+  // If the Shopify order is already "fulfilled", mark the FulfillmentOrder accordingly so
+  // the front-end can exclude it from active notifications automatically.
+  const shopifyOrderIds = orders
+    .map((o) => o.shopifyOrderId)
+    .filter(Boolean) as string[];
+
+  let fulfilledSet = new Set<string>();
+  if (shopifyOrderIds.length > 0) {
+    const shopifyOrders = await prisma.shopifyOrder.findMany({
+      where: {
+        OR: [
+          { orderName: { in: shopifyOrderIds } },
+          { shopifyId: { in: shopifyOrderIds } },
+        ],
+        fulfillmentStatus: "fulfilled",
+      },
+      select: { orderName: true, shopifyId: true },
+    });
+    shopifyOrders.forEach((so) => {
+      fulfilledSet.add(so.orderName);
+      fulfilledSet.add(so.shopifyId);
+    });
+  }
+
+  const enriched = orders.map((o) => ({
+    ...o,
+    shopifyFulfilled: o.shopifyOrderId ? fulfilledSet.has(o.shopifyOrderId) : false,
+  }));
+
+  return Response.json(enriched);
 }
 
 export async function POST(req: NextRequest) {
