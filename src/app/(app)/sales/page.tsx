@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { format } from "date-fns";
+import { useEffect, useState, useMemo } from "react";
+import { format, subDays, startOfDay, endOfDay, isWithinInterval, parseISO } from "date-fns";
 import {
   Table,
   TableBody,
@@ -11,8 +11,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Loader2, TrendingUp, RefreshCw, Download } from "lucide-react";
+import { Loader2, TrendingUp, RefreshCw, Download, Calendar, X } from "lucide-react";
 import { exportSalesExcel } from "@/lib/excel-export";
 
 type SalesItem = {
@@ -29,10 +30,25 @@ type SalesItem = {
   channel: string;
 };
 
+const QUICK_RANGES = [
+  { label: "7 ngày", days: 7 },
+  { label: "30 ngày", days: 30 },
+  { label: "90 ngày", days: 90 },
+  { label: "Tất cả", days: 0 },
+] as const;
+
+function todayStr() { return format(new Date(), "yyyy-MM-dd"); }
+function daysAgoStr(n: number) { return format(subDays(new Date(), n - 1), "yyyy-MM-dd"); }
+
 export default function SalesPage() {
   const [salesItems, setSalesItems] = useState<SalesItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+
+  // Date filter state
+  const [activePreset, setActivePreset] = useState<number>(30); // 0 = all
+  const [dateFrom, setDateFrom] = useState<string>(daysAgoStr(30));
+  const [dateTo, setDateTo] = useState<string>(todayStr());
 
   const fetchSales = () => {
     setLoading(true);
@@ -49,9 +65,7 @@ export default function SalesPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    fetchSales();
-  }, []);
+  useEffect(() => { fetchSales(); }, []);
 
   const handleSyncOrders = async () => {
     setSyncing(true);
@@ -61,22 +75,58 @@ export default function SalesPage() {
       if (!res.ok) throw new Error(data.error || "Lỗi đồng bộ");
       toast.success(`Đã đồng bộ đơn hàng mới`);
       fetchSales();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Lỗi đồng bộ");
     } finally {
       setSyncing(false);
     }
   };
 
-  const totalQuantity = salesItems.reduce((acc, item) => acc + item.quantity, 0);
-  const totalRevenue = salesItems.reduce((acc, item) => acc + item.subtotalUsd, 0);
+  function applyPreset(days: number) {
+    setActivePreset(days);
+    if (days === 0) {
+      setDateFrom("");
+      setDateTo("");
+    } else {
+      setDateFrom(daysAgoStr(days));
+      setDateTo(todayStr());
+    }
+  }
 
-  const revenueShopify = salesItems.filter(i => i.channel === "Website Shopify" || i.channel === "Mặc định (Shopify)").reduce((a, i) => a + i.subtotalUsd, 0);
-  const revenueTikTok = salesItems.filter(i => i.channel === "TikTok").reduce((a, i) => a + i.subtotalUsd, 0);
+  // Client-side filtering
+  const filteredItems = useMemo(() => {
+    if (!dateFrom && !dateTo) return salesItems;
+    const from = dateFrom ? startOfDay(parseISO(dateFrom)) : null;
+    const to   = dateTo   ? endOfDay(parseISO(dateTo))     : null;
+    return salesItems.filter((item) => {
+      if (!item.orderDate) return true;
+      const d = parseISO(item.orderDate);
+      if (from && to) return isWithinInterval(d, { start: from, end: to });
+      if (from) return d >= from;
+      if (to)   return d <= to;
+      return true;
+    });
+  }, [salesItems, dateFrom, dateTo]);
+
+  const totalQuantity = filteredItems.reduce((acc, item) => acc + item.quantity, 0);
+  const totalRevenue  = filteredItems.reduce((acc, item) => acc + item.subtotalUsd, 0);
+  const revenueShopify = filteredItems
+    .filter(i => i.channel === "Website Shopify" || i.channel === "Mặc định (Shopify)")
+    .reduce((a, i) => a + i.subtotalUsd, 0);
+  const revenueTikTok = filteredItems
+    .filter(i => i.channel === "TikTok")
+    .reduce((a, i) => a + i.subtotalUsd, 0);
+
+  const rangeLabel = dateFrom && dateTo
+    ? `${format(parseISO(dateFrom), "dd/MM/yyyy")} – ${format(parseISO(dateTo), "dd/MM/yyyy")}`
+    : dateFrom ? `Từ ${format(parseISO(dateFrom), "dd/MM/yyyy")}`
+    : dateTo   ? `Đến ${format(parseISO(dateTo), "dd/MM/yyyy")}`
+    : "Toàn bộ";
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 flex items-center gap-2">
             <TrendingUp className="h-6 w-6 text-green-600" />
@@ -84,10 +134,10 @@ export default function SalesPage() {
           </h1>
           <p className="text-sm text-gray-500 mt-1">Tổng hợp các sản phẩm đã bán từ Shopify (các đơn đã thanh toán)</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => exportSalesExcel(salesItems)}
-            disabled={salesItems.length === 0}
+            onClick={() => exportSalesExcel(filteredItems)}
+            disabled={filteredItems.length === 0}
             className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
@@ -104,10 +154,71 @@ export default function SalesPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* ── Date filter bar ── */}
+      <div className="flex items-center gap-3 flex-wrap rounded-xl border border-gray-200 bg-white px-4 py-3">
+        <div className="flex items-center gap-1.5 text-sm text-gray-500 shrink-0">
+          <Calendar className="h-4 w-4 text-gray-400" />
+          <span className="font-medium">Thời gian:</span>
+        </div>
+
+        {/* Quick presets */}
+        <div className="flex gap-1 flex-wrap">
+          {QUICK_RANGES.map(({ label, days }) => (
+            <button
+              key={days}
+              onClick={() => applyPreset(days)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium border transition-all ${
+                activePreset === days && !(days === 0 && (dateFrom || dateTo))
+                  ? "bg-green-600 text-white border-green-600"
+                  : "bg-white text-gray-600 border-gray-200 hover:border-green-300 hover:text-green-700"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Divider */}
+        <span className="text-gray-300 text-sm hidden sm:inline">|</span>
+
+        {/* Custom date range */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => { setDateFrom(e.target.value); setActivePreset(-1); }}
+            className="h-8 w-36 text-sm"
+          />
+          <span className="text-gray-400 text-sm">→</span>
+          <Input
+            type="date"
+            value={dateTo}
+            onChange={(e) => { setDateTo(e.target.value); setActivePreset(-1); }}
+            className="h-8 w-36 text-sm"
+          />
+          {(dateFrom || dateTo) && activePreset === -1 && (
+            <button
+              onClick={() => applyPreset(0)}
+              className="text-gray-400 hover:text-gray-600"
+              title="Xóa bộ lọc"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Range summary */}
+        <span className="ml-auto text-xs text-gray-400 shrink-0">
+          {rangeLabel} · <strong className="text-gray-600">{filteredItems.length}</strong> dòng
+        </span>
+      </div>
+
+      {/* ── Summary cards ── */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="rounded-md border bg-white p-5 shadow-sm">
-          <p className="text-sm font-medium text-gray-500">Doanh thu chung (USD)</p>
+          <p className="text-sm font-medium text-gray-500">Doanh thu ({rangeLabel})</p>
           <p className="mt-2 text-3xl font-bold text-green-600">${totalRevenue.toFixed(2)}</p>
+          <p className="text-xs text-gray-400 mt-1">{totalQuantity} sản phẩm</p>
         </div>
         <div className="rounded-md border bg-white p-5 shadow-sm border-l-4 border-l-blue-500">
           <p className="text-sm font-medium text-gray-500">Web Shopify</p>
@@ -117,9 +228,17 @@ export default function SalesPage() {
           <p className="text-sm font-medium text-gray-500">TikTok Shop</p>
           <p className="mt-2 text-3xl font-bold text-gray-900">${revenueTikTok.toFixed(2)}</p>
         </div>
+        <div className="rounded-md border bg-white p-5 shadow-sm border-l-4 border-l-gray-300">
+          <p className="text-sm font-medium text-gray-500">Tổng đơn bán</p>
+          <p className="mt-2 text-3xl font-bold text-gray-700">
+            {new Set(filteredItems.map(i => i.orderId)).size}
+          </p>
+          <p className="text-xs text-gray-400 mt-1">đơn hàng</p>
+        </div>
       </div>
 
-      <div className="rounded-md border bg-white shadow-sm overflow-hidden auto-mx-auto">
+      {/* ── Table ── */}
+      <div className="rounded-md border bg-white shadow-sm overflow-hidden">
         <Table>
           <TableHeader className="bg-gray-50/50">
             <TableRow>
@@ -136,18 +255,21 @@ export default function SalesPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-40 text-center">
+                <TableCell colSpan={8} className="h-40 text-center">
                   <Loader2 className="h-6 w-6 animate-spin mx-auto text-gray-400" />
                 </TableCell>
               </TableRow>
-            ) : salesItems.length > 0 ? (
-              salesItems.map((item) => (
+            ) : filteredItems.length > 0 ? (
+              filteredItems.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="text-gray-600 whitespace-nowrap">
-                    {format(new Date(item.orderDate), "dd/MM/yyyy")}
+                    {format(parseISO(item.orderDate), "dd/MM/yyyy")}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={item.channel === "TikTok" ? "default" : "outline"} className={item.channel === "TikTok" ? "bg-black" : ""}>
+                    <Badge
+                      variant={item.channel === "TikTok" ? "default" : "outline"}
+                      className={item.channel === "TikTok" ? "bg-black" : ""}
+                    >
                       {item.channel}
                     </Badge>
                   </TableCell>
@@ -167,11 +289,10 @@ export default function SalesPage() {
               ))
             ) : (
               <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="h-40 text-center text-gray-500"
-                >
-                  Chưa có sản phẩm nào được bán.
+                <TableCell colSpan={8} className="h-40 text-center text-gray-500">
+                  {salesItems.length > 0
+                    ? `Không có đơn nào trong khoảng ${rangeLabel}`
+                    : "Chưa có sản phẩm nào được bán."}
                 </TableCell>
               </TableRow>
             )}
