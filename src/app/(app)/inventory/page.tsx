@@ -9,6 +9,7 @@ import {
   AlertTriangle, Package, RefreshCw, Save, Search,
   Home, Warehouse, ExternalLink, Leaf, Link2, ChevronDown, ChevronUp,
   GitCompareArrows, CheckCircle2, XCircle, HelpCircle, ArrowRight, Clock,
+  Pencil, X as XIcon,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -140,6 +141,31 @@ export default function InventoryPage() {
   const [unmatchedBros, setUnmatchedBros] = useState<UnmatchedBrosItem[]>([]);
   const [showUnmatched, setShowUnmatched] = useState(false);
   const [linkingSkus, setLinkingSkus] = useState<Record<string, string>>({});
+
+  // ── Inline nhungQty edit state ────────────────────────────────────────────
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingVal, setEditingVal] = useState<string>("");
+  const [savingInline, setSavingInline] = useState(false);
+
+  async function saveInlineNhung(itemId: string) {
+    const newQty = Math.max(0, parseInt(editingVal) || 0);
+    setSavingInline(true);
+    try {
+      const res = await fetch(`/api/products/${itemId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nhungQty: newQty }),
+      });
+      if (!res.ok) throw new Error("Lỗi lưu");
+      toast.success("Đã lưu kho Nhung ✓");
+      setEditingId(null);
+      await load();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Lỗi lưu");
+    } finally {
+      setSavingInline(false);
+    }
+  }
 
   // ── Reconciliation state ──────────────────────────────────────────────────
   const [reconData, setReconData] = useState<ReconciliationResponse | null>(null);
@@ -548,22 +574,55 @@ export default function InventoryPage() {
                         </span>
                       </td>
 
-                      {/* Kho Nhung — editable */}
+                      {/* Kho Nhung — inline editable */}
                       <td className="px-4 py-3 text-right">
-                        <Input
-                          type="number"
-                          min={0}
-                          className={`h-8 w-24 text-right text-sm font-semibold ml-auto ${isEdited ? "border-amber-400 bg-amber-50 ring-1 ring-amber-300" : ""}`}
-                          value={nhungQty}
-                          onChange={(e) => {
-                            const v = Math.max(0, parseInt(e.target.value) || 0);
-                            if (v === item.nhungQty) {
-                              setEdits((prev) => { const n = { ...prev }; delete n[item.id]; return n; });
-                            } else {
-                              setEdits((prev) => ({ ...prev, [item.id]: v }));
-                            }
-                          }}
-                        />
+                        {editingId === item.id ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <Input
+                              type="number"
+                              min={0}
+                              autoFocus
+                              className="h-8 w-20 text-right text-sm font-semibold border-orange-400 ring-1 ring-orange-300"
+                              value={editingVal}
+                              onChange={(e) => setEditingVal(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveInlineNhung(item.id);
+                                if (e.key === "Escape") setEditingId(null);
+                              }}
+                            />
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-green-600 hover:bg-green-50"
+                              disabled={savingInline}
+                              onClick={() => saveInlineNhung(item.id)}
+                            >
+                              <Save className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-gray-400 hover:bg-gray-100"
+                              onClick={() => setEditingId(null)}
+                            >
+                              <XIcon className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1 group">
+                            <span className={`font-semibold text-sm ${nhungQty === 0 ? "text-gray-300" : "text-gray-800"}`}>
+                              {nhungQty}
+                            </span>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-orange-600"
+                              onClick={() => { setEditingId(item.id); setEditingVal(String(nhungQty)); }}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        )}
                       </td>
 
                       {/* Kho Bros — readonly */}

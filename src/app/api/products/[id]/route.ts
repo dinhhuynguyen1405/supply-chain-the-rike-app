@@ -38,6 +38,7 @@ export async function PUT(
   if ("labelImageUrl" in body) data.labelImageUrl = body.labelImageUrl || null;
   if ("labelDriveUrl" in body) data.labelDriveUrl = body.labelDriveUrl || null;
   if ("groupId" in body) data.groupId = body.groupId || null;
+  if ("nhungQty" in body) data.nhungQty = body.nhungQty != null ? Number(body.nhungQty) : 0;
 
   const product = await prisma.product.update({ where: { id }, data });
   triggerSheetSync("products");

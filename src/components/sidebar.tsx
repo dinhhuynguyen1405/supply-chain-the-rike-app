@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, ShoppingCart, TrendingUp, Package,
   Users, Link2, Boxes, ShoppingBag, Truck,
-  ClipboardList, Wallet, Search, Settings, Factory,
+  ClipboardList, Wallet, Settings, Factory,
   BarChart3, Building2, DatabaseZap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,10 +13,9 @@ import { cn } from "@/lib/utils";
 
 const PIPELINE: { href: string; icon: React.ElementType; label: string; step?: number }[] = [
   { href: "/orders",     icon: ShoppingBag,  label: "Đơn Shopify" },
-  { href: "/research",   icon: Search,       label: "Nghiên cứu giá",      step: 1 },
-  { href: "/purchases",  icon: ShoppingCart, label: "Thu mua",             step: 2 },
-  { href: "/production", icon: Factory,      label: "Sản xuất & Đóng gói", step: 3 },
-  { href: "/shipments",  icon: Truck,        label: "Lô vận chuyển",       step: 4 },
+  { href: "/purchases",  icon: ShoppingCart, label: "Thu mua",             step: 1 },
+  { href: "/production", icon: Factory,      label: "Sản xuất & Đóng gói", step: 2 },
+  { href: "/shipments",  icon: Truck,        label: "Lô vận chuyển",       step: 3 },
 ];
 
 const WAREHOUSE: { href: string; icon: React.ElementType; label: string }[] = [

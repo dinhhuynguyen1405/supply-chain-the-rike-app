@@ -9,13 +9,19 @@ const include = {
   costs: { orderBy: { createdAt: "asc" as const } },
 } as const;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const orders = await prisma.productionOrder.findMany({
-      orderBy: { createdAt: "desc" },
-      include,
-    });
-    return Response.json(orders);
+    const url = new URL(req.url);
+    const page  = Math.max(1, parseInt(url.searchParams.get("page")  ?? "1",  10));
+    const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "20", 10));
+    const skip  = (page - 1) * limit;
+
+    const [orders, total] = await Promise.all([
+      prisma.productionOrder.findMany({ orderBy: { createdAt: "desc" }, skip, take: limit, include }),
+      prisma.productionOrder.count(),
+    ]);
+
+    return Response.json({ orders, total, page, limit, totalPages: Math.ceil(total / limit) });
   } catch (err) {
     console.error("[GET /api/production] Error:", err);
     return Response.json({ error: String(err) }, { status: 500 });

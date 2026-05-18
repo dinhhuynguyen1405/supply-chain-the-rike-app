@@ -86,6 +86,9 @@ const PACKING_COLORS: Record<string, string> = {
 
 export default function PurchasesPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -121,13 +124,18 @@ export default function PurchasesPage() {
     { mode: "group", groupId: "", quantity: 1, unit: "kg", priceVnd: 0, subtotalVnd: 0, notes: "" },
   ]);
 
-  const load = () =>
-    fetch("/api/purchases")
+  const load = (p = page) =>
+    fetch(`/api/purchases?page=${p}&limit=20`)
       .then((r) => r.json())
-      .then(setOrders);
+      .then((data) => {
+        setOrders(data.orders ?? []);
+        setTotalOrders(data.total ?? 0);
+        setTotalPages(data.totalPages ?? 1);
+        setPage(data.page ?? p);
+      });
 
   useEffect(() => {
-    load();
+    load(page);
     fetch("/api/suppliers").then((r) => r.json()).then(setSuppliers);
     fetch("/api/products?limit=5000")
       .then((r) => r.json())
@@ -136,6 +144,9 @@ export default function PurchasesPage() {
       .then((r) => r.json())
       .then((d) => setGroups(Array.isArray(d) ? d.map((g: { id: string; name: string; costUnit: string | null; baseCostVnd: number | null }) => ({ id: g.id, name: g.name, costUnit: g.costUnit, baseCostVnd: g.baseCostVnd })) : []));
   }, []);
+
+  // Reload orders when page changes
+  useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function updateItem(idx: number, field: keyof OrderItem, val: string) {
     const next = [...items];
@@ -240,7 +251,10 @@ export default function PurchasesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Thu mua</h1>
-          <p className="text-sm text-gray-500">Quản lý đơn mua hàng từ Việt Nam</p>
+          <p className="text-sm text-gray-500">
+            Quản lý đơn mua hàng từ Việt Nam
+            {totalOrders > 0 && <span className="ml-1 text-gray-400">· {totalOrders} đơn</span>}
+          </p>
         </div>
         <Button onClick={() => setOpen(true)} className="bg-green-600 hover:bg-green-700">
           <Plus className="mr-2 h-4 w-4" /> Tạo đơn mua
@@ -407,6 +421,29 @@ export default function PurchasesPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-4 text-sm text-gray-600">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ← Trang trước
+          </button>
+          <span className="font-medium">
+            Trang {page} / {totalPages}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+            className="px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Trang sau →
+          </button>
         </div>
       )}
 

@@ -61,14 +61,24 @@ const STATUS_COLORS: Record<string, string> = {
 export default function ProductionPage() {
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalOrders, setTotalOrders] = useState(0);
 
-  async function load() {
-    const res = await fetch("/api/production");
-    if (res.ok) setOrders(await res.json());
+  async function load(p = page) {
+    setLoading(true);
+    const res = await fetch(`/api/production?page=${p}&limit=20`);
+    if (res.ok) {
+      const data = await res.json();
+      setOrders(data.orders ?? []);
+      setTotalPages(data.totalPages ?? 1);
+      setTotalOrders(data.total ?? 0);
+      setPage(data.page ?? p);
+    }
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pending       = orders.filter((o) => o.status === "pending");
   const inProduction  = orders.filter((o) => o.status === "in_production");
@@ -96,6 +106,7 @@ export default function ProductionPage() {
           </h1>
           <p className="text-sm text-gray-500 mt-1">
             Lệnh sản xuất được tự động tạo khi đơn mua chuyển sang trạng thái "Đã đến".
+            {totalOrders > 0 && <span className="ml-1 text-gray-400">· {totalOrders} lệnh</span>}
           </p>
         </div>
         <div className="flex gap-3 text-sm text-gray-500">
@@ -142,9 +153,32 @@ export default function ProductionPage() {
         </section>
       )}
 
-      {orders.length === 0 && (
+      {orders.length === 0 && !loading && (
         <div className="text-center py-16 text-gray-400 text-sm">
           Chưa có lệnh sản xuất nào. Đổi trạng thái đơn mua sang "Đã đến" để tạo lệnh tự động.
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-4 text-sm text-gray-600">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ← Trang trước
+          </button>
+          <span className="font-medium">
+            Trang {page} / {totalPages}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+            className="px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Trang sau →
+          </button>
         </div>
       )}
     </div>

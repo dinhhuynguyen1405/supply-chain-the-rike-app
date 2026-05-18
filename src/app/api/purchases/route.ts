@@ -3,10 +3,15 @@ import { NextRequest } from "next/server";
 import { generateOrderCode, generateProductionCode, calcPlannedQty } from "@/lib/utils";
 import { triggerSheetSync } from "@/lib/sync-trigger";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const orders = await prisma.purchaseOrder.findMany({
-      orderBy: { orderDate: "desc" },
+    const url = new URL(req.url);
+    const page  = Math.max(1, parseInt(url.searchParams.get("page")  ?? "1",  10));
+    const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "20", 10));
+    const skip  = (page - 1) * limit;
+
+    const query = {
+      orderBy: { orderDate: "desc" as const },
       include: {
         supplier: true,
         items: { include: { product: true } },
@@ -26,8 +31,14 @@ export async function GET() {
           },
         },
       },
-    });
-    return Response.json(orders);
+    };
+
+    const [orders, total] = await Promise.all([
+      prisma.purchaseOrder.findMany({ ...query, skip, take: limit }),
+      prisma.purchaseOrder.count(),
+    ]);
+
+    return Response.json({ orders, total, page, limit, totalPages: Math.ceil(total / limit) });
   } catch (err) {
     console.error("[GET /api/purchases] Error:", err);
     return Response.json({ error: String(err) }, { status: 500 });

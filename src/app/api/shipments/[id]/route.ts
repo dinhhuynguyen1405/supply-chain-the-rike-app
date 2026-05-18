@@ -208,6 +208,72 @@ async function autoUpdateInventoryOnArrival(batchId: string, destinationWarehous
   }
 }
 
+// ─── Helper: auto-subtract nhungQty when batch departs VN (→ in_transit) ─────
+//
+// When goods leave Vietnam for a Bros (or mixed) shipment, they are no longer
+// available in Nhung's warehouse. Deduct the packed quantities from Product.nhungQty
+// (clamp to 0 — never go negative).
+
+async function autoDeductNhungOnDepart(batchId: string) {
+  // Fetch all purchase orders in this batch, with their production items
+  const batchOrders = await prisma.shipmentBatchOrder.findMany({
+    where: { shipmentBatchId: batchId },
+    include: {
+      purchaseOrder: {
+        include: {
+          productionOrder: {
+            include: {
+              items: {
+                include: { product: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Aggregate deduction per product
+  const deductMap: Record<string, number> = {};
+
+  for (const bo of batchOrders) {
+    const po = bo.purchaseOrder;
+    if (!po.productionOrder) continue;
+
+    for (const pi of po.productionOrder.items) {
+      const qty = pi.actualQty ?? 0;
+      if (!pi.productId || qty <= 0) continue;
+      deductMap[pi.productId] = (deductMap[pi.productId] ?? 0) + qty;
+    }
+  }
+
+  const entries = Object.entries(deductMap).filter(([, qty]) => qty > 0);
+  if (entries.length === 0) return;
+
+  // Fetch current nhungQty for each product so we can clamp to 0
+  const productIds = entries.map(([id]) => id);
+  const currentProducts = await prisma.product.findMany({
+    where: { id: { in: productIds } },
+    select: { id: true, nhungQty: true },
+  });
+  const currentQtyMap: Record<string, number> = {};
+  for (const p of currentProducts) currentQtyMap[p.id] = p.nhungQty;
+
+  await Promise.all(
+    entries.map(([productId, deduction]) => {
+      const current = currentQtyMap[productId] ?? 0;
+      const newQty = Math.max(0, current - deduction);
+      return prisma.product.update({
+        where: { id: productId },
+        data: { nhungQty: newQty },
+      });
+    })
+  );
+
+  console.log(`[shipment] autoDeductNhungOnDepart: batch ${batchId} deducted nhungQty for ${entries.length} product(s)`);
+  triggerSheetSync("nhung");
+}
+
 // ─── PATCH /api/shipments/[id] ────────────────────────────────────────────────
 
 export async function PATCH(
@@ -223,6 +289,8 @@ export async function PATCH(
   const newStatus: string | undefined = body.status;
   const justDone =
     newStatus === "done" && current.status !== "done" && !current.inventoryUpdated;
+  const justDeparted =
+    newStatus === "in_transit" && current.status !== "in_transit";
 
   const batch = await prisma.shipmentBatch.update({
     where: { id },
@@ -280,6 +348,18 @@ export async function PATCH(
     // Fire-and-forget — không chờ để tránh timeout
     autoUpdateInventoryOnArrival(id, batch.destinationWarehouse).catch((e) =>
       console.error("[shipment] autoUpdateInventory error:", e)
+    );
+  }
+
+  // Auto-deduct nhungQty khi lô vừa chuyển sang "in_transit" (xuất VN)
+  // Chỉ áp dụng cho lô đi kho Bros hoặc Mixed (hàng đi Mỹ)
+  if (
+    justDeparted &&
+    (batch.destinationWarehouse === "bros" || batch.destinationWarehouse === "mixed")
+  ) {
+    // Fire-and-forget — không chờ để tránh timeout
+    autoDeductNhungOnDepart(id).catch((e) =>
+      console.error("[shipment] autoDeductNhungOnDepart error:", e)
     );
   }
 

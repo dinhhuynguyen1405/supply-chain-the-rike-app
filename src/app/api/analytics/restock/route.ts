@@ -458,6 +458,12 @@ export async function GET(req: Request) {
     orderBy: { createdAtShopify: "asc" },
   });
 
+  const tiktokOrders = await prisma.fulfillmentOrder.findMany({
+    where: { source: "tiktok" },
+    include: { items: { where: { productId: { not: null } } } },
+    orderBy: { createdAt: "asc" },
+  });
+
   // 2. Products
   const products = await prisma.product.findMany({
     select: {
@@ -703,9 +709,49 @@ export async function GET(req: Request) {
     } catch { /* malformed */ }
   }
 
+  // ── TikTok FulfillmentOrder demand ───────────────────────────────────────
+  for (const o of tiktokOrders) {
+    const orderDate = new Date(o.createdAt);
+    const monthKey = `${orderDate.getFullYear()}-${String(orderDate.getMonth() + 1).padStart(2, "0")}`;
+
+    for (const item of o.items) {
+      if (!item.productId || !item.quantity) continue;
+      const aggKey = item.productId;
+      const product = products.find(p => p.id === aggKey) ?? null;
+
+      if (!skuAgg[aggKey]) {
+        skuAgg[aggKey] = {
+          title: product?.name ?? item.productName ?? aggKey,
+          totalSold: 0, numOrders: 0, revenueUsd: 0,
+          firstSale: orderDate, lastSale: orderDate,
+          soldByMonth: {}, revByMonth: {},
+        };
+      }
+      const agg = skuAgg[aggKey];
+      agg.totalSold    += item.quantity;
+      agg.numOrders    += 1;
+      // TikTok items have no price stored here — revenue stays 0 for now
+      agg.soldByMonth[monthKey] = (agg.soldByMonth[monthKey] ?? 0) + item.quantity;
+      if (orderDate < agg.firstSale) agg.firstSale = orderDate;
+      if (orderDate > agg.lastSale)  agg.lastSale  = orderDate;
+    }
+  }
+
   const now = new Date();
-  const oldest = orders[0]?.createdAtShopify ?? now;
-  const newest = orders[orders.length - 1]?.createdAtShopify ?? now;
+  // Compute oldest/newest across both Shopify and TikTok orders
+  const shopifyOldest = orders[0]?.createdAtShopify;
+  const shopifyNewest = orders[orders.length - 1]?.createdAtShopify;
+  const tiktokOldest  = tiktokOrders[0]?.createdAt;
+  const tiktokNewest  = tiktokOrders[tiktokOrders.length - 1]?.createdAt;
+
+  const oldestCandidates = [shopifyOldest, tiktokOldest].filter(Boolean) as Date[];
+  const newestCandidates = [shopifyNewest, tiktokNewest].filter(Boolean) as Date[];
+  const oldest = oldestCandidates.length > 0
+    ? oldestCandidates.reduce((a, b) => (new Date(a) < new Date(b) ? a : b))
+    : now;
+  const newest = newestCandidates.length > 0
+    ? newestCandidates.reduce((a, b) => (new Date(a) > new Date(b) ? a : b))
+    : now;
   const periodDays = Math.max(1, Math.round((now.getTime() - new Date(oldest).getTime()) / 86400000));
 
   // ── 6. Group by ProductGroup ──────────────────────────────────────────────
@@ -1076,7 +1122,7 @@ export async function GET(req: Request) {
 
   const critWarn = groupedItems.filter(i => i.urgency === "critical" || i.urgency === "warning");
   const summary: RestockSummary = {
-    totalOrders: orders.length,
+    totalOrders: orders.length + tiktokOrders.length,
     totalRevenueUsd: Math.round(shopifyTotalRevenue * 100) / 100,
     periodDays,
     ordersPerDay: Math.round((orders.length / periodDays) * 10) / 10,
