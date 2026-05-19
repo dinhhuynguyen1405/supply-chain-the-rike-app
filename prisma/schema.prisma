@@ -201,39 +201,38 @@ model ShipmentBatch {
   code        String    @unique   // VD: SHP-20260415-001
   description String?
 
-  // Carrier & tracking
-  carrier      String?   // DHL, FedEx, USPS, J&T...
-  trackingCode String?
+  // --- Tracking Vận Chuyển Đa Chặng ---
+  // Lệnh 1: Đà Nẵng -> HCM (Nội địa)
+  trackingVnHcm    String?   // Mã tracking nội địa
+  statusVnHcm      String    @default("pending") // pending | in_transit | arrived_hcm
+  shippingCostVnHcm Float?   // Phí ship thực tế chặng 1
 
-  // Timeline
-  packedDate     DateTime?  // Đóng hàng xong
-  departedVnDate DateTime?  // Xuất phát từ VN/HCM
-  arrivedUsDate  DateTime?  // Về đến Mỹ
-  receivedByTdDate DateTime? // kho TD xác nhận đã nhận
+  // Lệnh 2: Hồ Chí Minh -> Mỹ (Quốc tế)
+  carrier          String?   // DHL, FedEx, USPS...
+  trackingCode     String?   // Mã tracking quốc tế
+  statusHcmUs      String    @default("pending") // pending | in_transit | arrived_us
+  shippingCostHcmUs Float?   // Phí ship thực tế chặng 2
 
-  // Status
+  // Thông tin báo giá ròng (Dùng để tính toán trước)
+  estimatedRateUsdPerKg Float? @default(14) // Mặc định 14$ (khoảng 13-15$)
+
+  // Timeline cũ (giữ lại để tương thích)
+  packedDate     DateTime? 
+  departedVnDate DateTime? 
+  arrivedUsDate  DateTime? 
+  receivedByTdDate DateTime?
+
+  // Status tổng thể
   status  String    @default("packing")
-  // packing → in_transit → arrived_us → received_by_td → done
+  // packing → in_transit_hcm → arrived_hcm → in_transit_us → arrived_us → done
 
-  // kho TD đã cập nhật sheet chưa
-  tdSheetUpdated Boolean @default(false)
+  totalWeightKg   Float?  
+  shippingCostVnd Float?  // Tổng phí ship quy đổi VND (Huy + Nhung đóng góp)
 
-  totalWeightKg   Float?  // Tổng cân nặng lô
-  shippingCostVnd Float?  // Phí ship VN→US
-
-  // ── Kho đích tại Mỹ ────────────────────────────────────────────────────────
-  // "nhung" = toàn bộ vào Kho Nhung → tự động cộng nhungQty khi done
-  // "bros"  = toàn bộ vào Kho Bros  → tự động cộng WarehouseStock khi done
-  // "mixed" = một phần mỗi kho      → không auto-update, cập nhật thủ công
+  // ... các fields khác giữ nguyên
   destinationWarehouse String @default("nhung")
-
-  // Tự động cập nhật inventory khi lô đến nơi (done)?
-  // Set false nếu muốn kiểm tra trước khi confirm
   autoUpdateInventory Boolean @default(true)
-
-  // Đã tự động cộng inventory chưa (tránh duplicate)
   inventoryUpdated Boolean @default(false)
-
   notes     String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
