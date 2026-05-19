@@ -147,6 +147,10 @@ model PurchaseOrder {
   // Đơn mua hộ: có thêm khoản thu lại từ người nhờ mua
   isBuyOnBehalf   Boolean @default(false)
   sellingPriceVnd Float?
+
+  // Ai là người đầu tư tiền mua đơn này: "huy" | "nhung"
+  investor        String  @default("huy")
+
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

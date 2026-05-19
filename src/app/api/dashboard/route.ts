@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/prisma";
-import { toSellingUnits } from "@/lib/utils";
 
 export async function GET() {
   const sixMonthsAgo = new Date();
@@ -40,6 +39,10 @@ export async function GET() {
     // Refunds + op costs for adjusted profit
     refundAgg,
     opCostAgg,
+    // Dữ liệu tính nợ NCC
+    allPurchaseOrders,
+    // Critical stock product IDs
+    recentSaleProductIdData,
   ] = await Promise.all([
     prisma.purchaseOrder.count(),
     prisma.purchaseOrder.count({
@@ -54,8 +57,8 @@ export async function GET() {
     }),
     prisma.purchaseOrder.groupBy({ by: ["status"], _count: { id: true } }),
     prisma.purchaseOrder.findMany({
-      where: { isBuyOnBehalf: true },
-      include: { payments: true },
+      where: { isBuyOnBehalf: true, sellingPriceVnd: { gt: 0 } },
+      select: { code: true, sellingPriceVnd: true, payments: { select: { direction: true, amount: true } } },
     }),
     prisma.setting.findMany(),
     // Pipeline
@@ -86,6 +89,7 @@ export async function GET() {
     }),
     // ✅ Tồn kho: dùng nhungQty + brosQty (nguồn chính xác)
     prisma.product.findMany({
+      where: { skuShopify: { not: null } },
       select: {
         id: true, name: true, nameVi: true,
         nhungQty: true, skuAmz: true, skuShopify: true,
@@ -112,6 +116,17 @@ export async function GET() {
     prisma.salesRefund.aggregate({ _sum: { amountUsd: true } }),
     // OpCost tổng
     prisma.operatingCost.aggregate({ _sum: { amountUsd: true, amountVnd: true } }),
+    // Nợ NCC
+    prisma.purchaseOrder.findMany({
+      where: { status: { notIn: ["cancelled"] } },
+      select: { totalVnd: true, payments: { select: { direction: true, amount: true } } },
+    }),
+    // IDs có sale 90 ngày
+    prisma.salesItem.findMany({
+      where: { orderDate: { gte: ninetyDaysAgo }, productId: { not: null } },
+      select: { productId: true },
+      distinct: ["productId"],
+    }),
   ]);
 
   // ── Settings ─────────────────────────────────────────────────────────────
@@ -186,10 +201,6 @@ export async function GET() {
 
   // ── Nợ nhà cung cấp ───────────────────────────────────────────────────────
   let supplierDebtVnd = 0;
-  const allPurchaseOrders = await prisma.purchaseOrder.findMany({
-    include: { payments: true },
-    where: { status: { notIn: ["cancelled"] } },
-  });
   for (const o of allPurchaseOrders) {
     const paid = o.payments
       .filter((p) => p.direction === "to_supplier")
@@ -227,11 +238,7 @@ export async function GET() {
 
   // ── Critical stock (hết hàng + có doanh thu gần đây) ────────────────────
   const recentSaleProductIds = new Set(
-    (await prisma.salesItem.findMany({
-      where: { orderDate: { gte: ninetyDaysAgo }, productId: { not: null } },
-      select: { productId: true },
-      distinct: ["productId"],
-    })).map((s) => s.productId as string)
+    recentSaleProductIdData.map((s) => s.productId as string)
   );
   const criticalStockProducts = allProducts.filter((p) => {
     if (!p.skuShopify) return false;
